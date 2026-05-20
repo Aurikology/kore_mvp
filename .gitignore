@@ -1,0 +1,24 @@
+# OS
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Env
+.env
+.env.*
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node
+node_modules/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
