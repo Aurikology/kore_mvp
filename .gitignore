@@ -8,17 +8,34 @@ Desktop.ini
 .env
 .env.*
 
-# Python
-__pycache__/
-*.pyc
-.venv/
-venv/
-
-# Node
-node_modules/
-dist/
-build/
-
 # IDE
 .vscode/
 .idea/
+*.iml
+*.iws
+
+# Flutter / Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+build/
+*.log
+
+# Android
+android/.gradle/
+android/local.properties
+android/key.properties
+android/**/GeneratedPluginRegistrant.java
+*.jks
+*.keystore
+
+# Windows (Flutter desktop)
+windows/flutter/ephemeral/
+
+# Node (landing page tooling, if any)
+node_modules/
+dist/
+
+# NOTE: pubspec.lock and .metadata are intentionally TRACKED.
+# This is an application, not a package - the lockfile is part of the build.
