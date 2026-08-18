@@ -18,7 +18,7 @@ simulated.**
 | Live dashboard (gauge, trend, reset protocol) | Implemented |
 | Windows desktop build | Working |
 | Simulated EEG source | Implemented |
-| Native C++/FFI DSP path | Scaffolded, not built — falls back to Dart |
+| Native C++/FFI DSP path | Implemented and built on Windows; parity-tested against Dart |
 | BLE / real hardware | Not implemented (seam in place) |
 | Android build | Scaffold only; needs an Android SDK + NDK |
 | Post-reset check-in, streaks, persistence | Not implemented |
@@ -33,7 +33,7 @@ No Android SDK, Developer Mode, or network connection required — the project
 has zero plugins and bundles its fonts.
 
 ```bash
-flutter test                   # 15 tests, including the DSP assertions
+flutter test                   # 18 tests, including the DSP assertions
 dart run tool/cli_probe.dart   # sweep load levels and print the index curve
 ```
 
@@ -93,13 +93,34 @@ closed loop the product is built around.
 - Acquisition (256 Hz) is decoupled from repaint (4 Hz). Samples arrive in
   blocks; `KoreSession` notifies once per completed analysis frame.
 
-### Not yet wired up
+### The native path
 
-The native DSP path needs three Windows-specific fixes, all noted in the code:
-`cpp/CMakeLists.txt` uses GCC flags and links `c++` (neither works under MSVC),
-and `ffi_bindings.cc` has `extern "C"` but no `__declspec(dllexport)` — on
-Windows that controls name mangling, not export, so the DLL would build with an
-empty export table and fail at symbol lookup rather than at load.
+`cpp/` builds as `kore_signal.dll` alongside `kore.exe` as part of the normal
+`flutter build windows`, and `NativeDspEngine` loads it over FFI. Three
+Windows-specific things had to be right, and each is commented at the site:
+
+- `extern "C"` controls name mangling, not export. Without
+  `__declspec(dllexport)` the DLL builds with an empty export table,
+  `DynamicLibrary.open()` *succeeds*, and the failure only surfaces later at
+  `lookupFunction` — so a load-succeeded check proves nothing.
+- The old `cpp/CMakeLists.txt` set `-O3 -fPIC` globally and linked `c++`;
+  cl.exe rejects all three. Those flags now live behind `if(ANDROID)`, and the
+  optimisation level is left to CMake per configuration — hardcoding `/O2`
+  collides with Debug's `/RTC1`.
+- The target is deliberately not routed through Flutter's
+  `apply_standard_settings()`, which sets `/WX` and `_HAS_EXCEPTIONS=0`. The
+  FFI shim uses try/catch to stop exceptions unwinding across the C boundary.
+
+`test/dsp/native_parity_test.dart` holds the two engines to each other sample
+for sample: same frame count, and theta/alpha agreeing to 1e-9 relative. Both
+sides are double precision specifically so that tolerance is meaningful — a
+float32 core would drift through the Goertzel accumulation and make parity
+testing guesswork. The tests skip themselves with a build hint if the DLL is
+absent.
+
+The fallback still matters: `createDspEngine()` catches a missing library,
+unresolved symbols, and an ABI-version mismatch, so any of the three costs a
+log line rather than the app.
 
 ## Repo layout
 
@@ -108,7 +129,7 @@ lib/dsp/       filters, Goertzel, band power, the index
 lib/sources/   EegSource seam + simulated generator
 lib/session/   pipeline wiring and demo controls
 lib/widgets/   gauge, sparkline, reset protocol
-cpp/           native DSP (not built yet)
+cpp/           native DSP (C++/FFI), built into the Windows bundle
 docs/          product narrative and positioning
 landing-page/  static marketing site (Netlify)
 tool/          cli_probe.dart, for tuning the index offline
