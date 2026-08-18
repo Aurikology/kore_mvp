@@ -24,6 +24,16 @@ class SimulatedEegSource implements EegSource {
   int _lastElapsedMicros = 0;
   double _sampleCarry = 0;
 
+  /// Microseconds since [start], as a function so it can be replaced.
+  ///
+  /// The default reads a real [Stopwatch], which is the whole point of this
+  /// class - see the note above about the 16 ms timer. It also means fake
+  /// time cannot drive it: under `flutter test` timers are faked but a
+  /// Stopwatch is not, so pumping produces no samples and the index never
+  /// calibrates. Injecting the clock is what makes the full detect -> reset
+  /// -> confirm path testable.
+  final int Function()? _injectedElapsedMicros;
+
   /// When true the load follows the scripted demo timeline. Any manual
   /// control switches it off - during a live demo you want the presenter
   /// driving, not a wall clock.
@@ -32,7 +42,12 @@ class SimulatedEegSource implements EegSource {
   SimulatedEegSource({
     ScenarioEEGGenerator? generator,
     this.autoTimeline = true,
-  }) : generator = generator ?? ScenarioEEGGenerator();
+    int Function()? elapsedMicros,
+  })  : generator = generator ?? ScenarioEEGGenerator(),
+        _injectedElapsedMicros = elapsedMicros;
+
+  int get _elapsedMicros =>
+      _injectedElapsedMicros?.call() ?? _clock?.elapsedMicroseconds ?? 0;
 
   @override
   Stream<List<EEGSample>> get sampleBlocks => _controller.stream;
@@ -48,13 +63,13 @@ class SimulatedEegSource implements EegSource {
   @override
   Future<void> start() async {
     if (_timer != null) return;
-    _clock = Stopwatch()..start();
+    if (_injectedElapsedMicros == null) _clock = Stopwatch()..start();
     _lastElapsedMicros = 0;
     _timer = Timer.periodic(_tick, (_) => _pump());
   }
 
   void _pump() {
-    final now = _clock!.elapsedMicroseconds;
+    final now = _elapsedMicros;
     final deltaSeconds = (now - _lastElapsedMicros) / 1e6;
     _lastElapsedMicros = now;
 
