@@ -1,0 +1,56 @@
+name: kore
+description: KORE - The digital dashboard for your mind. A closed-loop biometric system for cognitive load management.
+publish_to: 'none'
+
+version: 0.1.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.6
+  ffi: ^2.1.0
+
+  # Deliberately NOT depended on:
+  #
+  #   flutter_reactive_ble - declares only android/ios platform defaults, so on
+  #     Windows FlutterReactiveBle() resolves to an unimplemented platform
+  #     interface. The BLE seam survives as the pure-Dart EegSource abstraction
+  #     in lib/sources/eeg_source.dart; a BLE source drops in behind it later.
+  #
+  #   google_fonts - awaited an HTTP fetch before runApp(), so startup blocked
+  #     on network availability, and it pulled in path_provider. Fonts are now
+  #     bundled as ordinary assets (see below).
+  #
+  # Between them those two packages were the project's only plugins. Without
+  # them the Windows build needs no symlink support, i.e. no Developer Mode.
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+
+  fonts:
+    - family: SpaceGrotesk
+      fonts:
+        - asset: assets/fonts/SpaceGrotesk-400.ttf
+          weight: 400
+        - asset: assets/fonts/SpaceGrotesk-500.ttf
+          weight: 500
+        - asset: assets/fonts/SpaceGrotesk-600.ttf
+          weight: 600
+        - asset: assets/fonts/SpaceGrotesk-700.ttf
+          weight: 700
+    - family: Fraunces
+      fonts:
+        - asset: assets/fonts/Fraunces-600.ttf
+          weight: 600
+        - asset: assets/fonts/Fraunces-700.ttf
+          weight: 700
