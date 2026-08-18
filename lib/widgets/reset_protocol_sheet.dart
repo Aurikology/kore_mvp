@@ -29,6 +29,9 @@ class _ResetProtocolSheetState extends State<ResetProtocolSheet>
     duration: const Duration(seconds: _cycleSeconds),
   )..repeat();
 
+  /// Guards against popping twice. See [_onSession].
+  bool _leaving = false;
+
   @override
   void initState() {
     super.initState();
@@ -39,8 +42,16 @@ class _ResetProtocolSheetState extends State<ResetProtocolSheet>
   }
 
   void _onSession() {
-    if (!mounted) return;
+    if (!mounted || _leaving) return;
+
     if (!widget.session.resetActive) {
+      _leaving = true;
+      // Stop listening the instant we decide to leave. `push` completes as
+      // soon as pop() is called, so the caller pushes the check-in while this
+      // route is still animating out and still mounted - and the session keeps
+      // notifying at 4 Hz throughout. Without this, the next notification
+      // called maybePop() again and closed the check-in instead.
+      widget.session.removeListener(_onSession);
       Navigator.of(context).maybePop();
     } else {
       setState(() {});
