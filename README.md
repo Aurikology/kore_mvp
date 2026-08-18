@@ -21,7 +21,7 @@ simulated.**
 | Native C++/FFI DSP path | Implemented and built on Windows; parity-tested against Dart |
 | BLE / real hardware | Not implemented (seam in place) |
 | Android build | Scaffold only; needs an Android SDK + NDK |
-| Post-reset check-in, streaks, persistence | Not implemented |
+| Post-reset check-in, streaks, persistence | Implemented, on-disk, no plugins |
 
 ## Running it
 
@@ -33,7 +33,7 @@ No Android SDK, Developer Mode, or network connection required — the project
 has zero plugins and bundles its fonts.
 
 ```bash
-flutter test                   # 18 tests, including the DSP assertions
+flutter test                   # 47 tests, including the DSP assertions
 dart run tool/cli_probe.dart   # sweep load levels and print the index curve
 ```
 
@@ -79,6 +79,30 @@ Measured end to end: load 0.15 → 29, 0.50 → 55, 0.75 → 72, 0.90 → 81.
 **4. The reset.** A 60 second guided box-breathing protocol. Simulated load
 decays as it runs, so the index visibly falls on the meter behind it — the
 closed loop the product is built around.
+
+**5. Confirm and reinforce.** On completion the app asks a single question —
+*how clear do you feel?* — on a 1–5 scale, and pairs the answer with the
+measured index drop across the protocol. Each reset is appended to
+`%APPDATA%\KORE\history.json` (`~/.kore/history.json` elsewhere), and the
+dashboard shows the day streak, mean drop, and mean clarity.
+
+This closes steps 3 and 4 of the core loop in `docs/positioning.md` and is what
+makes three of its four key metrics measurable at all. Three deliberate
+choices:
+
+- The check-in is only offered when the protocol **ran to the end**. Asking
+  "did that help?" after a four-second abort collects noise and calls it a
+  metric. Abandoned resets are still logged — abandonment rate is a retention
+  signal — but they are excluded from the effectiveness average.
+- Resets taken **before calibration finishes** are not logged at all. Without a
+  personal baseline the index has nothing to be measured against, so a
+  before/after pair from that window would be a number with no meaning.
+- The sheet states the measurement plainly, including when the index went
+  **up**. A reset that did not work should say so.
+
+The uplift being measured is currently a simulated one — `applyResetRecovery()`
+decays the synthetic load. The arithmetic is real; the physiology behind it
+waits on hardware.
 
 ## Architecture notes
 
@@ -127,8 +151,9 @@ log line rather than the app.
 ```
 lib/dsp/       filters, Goertzel, band power, the index
 lib/sources/   EegSource seam + simulated generator
-lib/session/   pipeline wiring and demo controls
-lib/widgets/   gauge, sparkline, reset protocol
+lib/session/   pipeline wiring, reset history, demo controls
+lib/services/  EEG stream types + on-disk history store
+lib/widgets/   gauge, sparkline, reset protocol, check-in, recovery
 cpp/           native DSP (C++/FFI), built into the Windows bundle
 docs/          product narrative and positioning
 landing-page/  static marketing site (Netlify)
