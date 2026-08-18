@@ -7,7 +7,9 @@ import '../dsp/cognitive_load_index.dart';
 import '../dsp/dsp_engine.dart';
 import '../dsp/dsp_engine_factory.dart';
 import '../services/eeg_data_stream.dart';
+import '../services/history_store.dart';
 import '../sources/simulated_eeg_source.dart';
+import 'reset_record.dart';
 
 /// Owns the live pipeline: source -> DSP engine -> Cognitive Load Index.
 ///
@@ -23,6 +25,11 @@ class KoreSession extends ChangeNotifier {
   final DspEngine engine;
   final CognitiveLoadIndex index = CognitiveLoadIndex();
 
+  /// Null means history lives in memory for this run only. The real store is
+  /// wired at the composition root (`main`), which keeps widget tests from
+  /// writing to the user's AppData just by pumping the app.
+  final HistoryStore? store;
+
   final ListQueue<double> _history = ListQueue<double>();
 
   StreamSubscription<List<EEGSample>>? _subscription;
@@ -31,7 +38,12 @@ class KoreSession extends ChangeNotifier {
   int _resetSecondsRemaining = 0;
   Timer? _resetTimer;
 
-  KoreSession({SimulatedEegSource? source, DspEngine? engine})
+  ResetHistory _resetHistory = ResetHistory.empty;
+  _PendingReset? _pending;
+  DateTime? _startedAt;
+  double _loadBefore = 0;
+
+  KoreSession({SimulatedEegSource? source, DspEngine? engine, this.store})
       : source = source ?? SimulatedEegSource(),
         engine = engine ?? createDspEngine();
 
@@ -55,9 +67,23 @@ class KoreSession extends ChangeNotifier {
 
   int get resetSecondsRemaining => _resetSecondsRemaining;
 
-  double get resetProgress => _resetActive
-      ? 1 - (_resetSecondsRemaining / resetDuration.inSeconds)
-      : 0;
+  double get resetProgress =>
+      _resetActive ? 1 - (_resetSecondsRemaining / resetDuration.inSeconds) : 0;
+
+  ResetHistory get resetHistory => _resetHistory;
+
+  /// A finished reset is waiting to be written. The check-in is only offered
+  /// for a protocol that actually ran to the end - asking "did that help?"
+  /// after a four-second abort would collect noise and call it a metric.
+  bool get awaitingCheckIn => _pending?.completed ?? false;
+
+  bool get hasUncommittedReset => _pending != null;
+
+  /// Index points the pending reset moved, positive when the load fell.
+  double get pendingDrop {
+    final p = _pending;
+    return p == null ? 0 : p.loadBefore - p.loadAfter;
+  }
 
   String get backendLabel => engine.backendLabel;
 
@@ -71,6 +97,14 @@ class KoreSession extends ChangeNotifier {
   // --- Lifecycle ----------------------------------------------------------
 
   Future<void> start() async {
+    // Load first so the dashboard shows the real streak on the first frame
+    // rather than flashing a zero and correcting itself.
+    final loaded = await store?.load();
+    if (loaded != null) {
+      _resetHistory = loaded;
+      notifyListeners();
+    }
+
     _subscription = source.sampleBlocks.listen(_onBlock);
     await source.start();
   }
@@ -107,12 +141,18 @@ class KoreSession extends ChangeNotifier {
 
     _resetActive = true;
     _resetSecondsRemaining = resetDuration.inSeconds;
+    // Only log resets taken against an established baseline. Before
+    // calibration finishes the index has no personal reference to be measured
+    // against, so a before/after pair from that window would be a number
+    // without a meaning - and "reset effectiveness" is a headline metric.
+    _startedAt = index.isCalibrated ? DateTime.now().toUtc() : null;
+    _loadBefore = index.value;
     source.applyResetRecovery();
 
     _resetTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       _resetSecondsRemaining--;
       if (_resetSecondsRemaining <= 0) {
-        cancelReset();
+        _endReset(completed: true);
       } else {
         notifyListeners();
       }
@@ -121,11 +161,53 @@ class KoreSession extends ChangeNotifier {
     notifyListeners();
   }
 
-  void cancelReset() {
+  /// Ended by the user before the protocol finished.
+  void cancelReset() => _endReset(completed: false);
+
+  void _endReset({required bool completed}) {
     _resetTimer?.cancel();
     _resetTimer = null;
+    if (!_resetActive) return;
+
     _resetActive = false;
     _resetSecondsRemaining = 0;
+
+    final startedAt = _startedAt;
+    if (startedAt != null) {
+      // Capture the after-reading now, not when the user answers the check-in:
+      // they may sit on that screen, and the index keeps moving.
+      _pending = _PendingReset(
+        startedAt: startedAt,
+        completed: completed,
+        loadBefore: _loadBefore,
+        loadAfter: index.value,
+      );
+    }
+    _startedAt = null;
+
+    notifyListeners();
+  }
+
+  /// Writes the finished reset, with [clarity] from the check-in when the user
+  /// answered one. Safe to call when nothing is pending.
+  Future<void> commitReset({int? clarity}) async {
+    final pending = _pending;
+    if (pending == null) return;
+    _pending = null;
+
+    final record = ResetRecord(
+      startedAt: pending.startedAt,
+      completed: pending.completed,
+      loadBefore: pending.loadBefore,
+      loadAfter: pending.loadAfter,
+      clarity: clarity,
+    );
+
+    final store = this.store;
+    _resetHistory = store == null
+        ? _resetHistory.add(record)
+        : await store.append(_resetHistory, record);
+
     notifyListeners();
   }
 
@@ -155,4 +237,20 @@ class KoreSession extends ChangeNotifier {
     engine.dispose();
     super.dispose();
   }
+}
+
+/// A finished reset held between the protocol ending and the check-in being
+/// answered or dismissed.
+class _PendingReset {
+  final DateTime startedAt;
+  final bool completed;
+  final double loadBefore;
+  final double loadAfter;
+
+  const _PendingReset({
+    required this.startedAt,
+    required this.completed,
+    required this.loadBefore,
+    required this.loadAfter,
+  });
 }

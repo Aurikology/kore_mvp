@@ -1,14 +1,19 @@
 import 'package:flutter/material.dart';
 
 import '../dsp/cognitive_load_index.dart';
+import '../services/history_store.dart';
 import '../session/kore_session.dart';
 import '../theme.dart';
+import '../widgets/check_in_sheet.dart';
 import '../widgets/load_meter.dart';
 import '../widgets/load_sparkline.dart';
+import '../widgets/recovery_card.dart';
 import '../widgets/reset_protocol_sheet.dart';
 
 class HomePage extends StatefulWidget {
-  const HomePage({super.key});
+  final HistoryStore? store;
+
+  const HomePage({super.key, this.store});
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -20,7 +25,7 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
-    _session = KoreSession();
+    _session = KoreSession(store: widget.store);
     _session.start();
   }
 
@@ -40,7 +45,24 @@ class _HomePageState extends State<HomePage> {
         builder: (_) => ResetProtocolSheet(session: _session),
       ),
     );
+    // Covers the system back gesture, which pops the route without going
+    // through either exit path in the sheet.
     if (_session.resetActive) _session.cancelReset();
+    if (!mounted) return;
+
+    if (_session.awaitingCheckIn) {
+      final clarity = await showModalBottomSheet<int>(
+        context: context,
+        backgroundColor: KoreTheme.surface,
+        showDragHandle: true,
+        builder: (_) => CheckInSheet(drop: _session.pendingDrop),
+      );
+      // Dismissing by tapping outside returns null, same as Skip: the reset is
+      // still logged, just without a self-report.
+      await _session.commitReset(clarity: clarity);
+    } else {
+      await _session.commitReset();
+    }
   }
 
   @override
@@ -83,6 +105,10 @@ class _HomePageState extends State<HomePage> {
               const SizedBox(height: 18),
               _trendCard(text),
               const SizedBox(height: 16),
+              RecoveryCard(
+                history: _session.resetHistory,
+                today: DateTime.now(),
+              ),
               _resetCta(),
               const SizedBox(height: 18),
               _demoControls(text),
@@ -127,7 +153,10 @@ class _HomePageState extends State<HomePage> {
 
   Widget _stateChip(TextTheme text) {
     final (label, color) = switch (_session.loadState) {
-      LoadState.calibrating => ('Establishing your baseline', KoreTheme.textSecondary),
+      LoadState.calibrating => (
+          'Establishing your baseline',
+          KoreTheme.textSecondary
+        ),
       LoadState.steady => ('Steady', KoreTheme.sage),
       LoadState.strain => ('Strain detected', KoreTheme.rust),
     };
@@ -166,7 +195,8 @@ class _HomePageState extends State<HomePage> {
                 Text('LAST 2 MINUTES',
                     style: text.labelMedium?.copyWith(letterSpacing: 1.4)),
                 const Spacer(),
-                Text('strain threshold ${CognitiveLoadIndex.kStrainEnter.round()}',
+                Text(
+                    'strain threshold ${CognitiveLoadIndex.kStrainEnter.round()}',
                     style: text.labelSmall),
               ],
             ),
