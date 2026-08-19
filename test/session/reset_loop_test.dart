@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kore/dsp/dart_dsp_engine.dart';
+import 'package:kore/dsp/focus_crash_predictor.dart';
 import 'package:kore/services/history_store.dart';
 import 'package:kore/session/kore_session.dart';
 import 'package:kore/session/reset_record.dart';
@@ -80,6 +81,31 @@ void main() {
       expect(history.records.single.clarity, 4);
       expect(history.records.single.drop, closeTo(drop, 1e-9));
       expect(history.averageDrop, greaterThan(0));
+
+      session.dispose();
+    });
+  });
+
+  test('the session stays silent about crashes until it is calibrated', () {
+    fakeAsync((async) {
+      final session = _session(async: async);
+      session.start();
+      async.flushMicrotasks();
+
+      _advance(async, const Duration(seconds: 5));
+      expect(session.isCalibrated, isFalse);
+      expect(session.crashWarning, isFalse);
+      expect(session.crashForecast.status, CrashForecastStatus.uncalibrated,
+          reason: 'a forecast over an index with no baseline is theatre');
+
+      _advance(async, const Duration(seconds: 25));
+      expect(session.isCalibrated, isTrue);
+      expect(session.crashForecast.status,
+          isNot(CrashForecastStatus.uncalibrated),
+          reason: 'the predictor must be live once the baseline lands');
+
+      session.recalibrate();
+      expect(session.crashForecast.status, CrashForecastStatus.uncalibrated);
 
       session.dispose();
     });
