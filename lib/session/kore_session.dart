@@ -136,6 +136,9 @@ class KoreSession extends ChangeNotifier {
       index: index.value,
       deviation: index.deviation,
       state: index.state,
+      // The user's own threshold, not the default: forecasting a crossing of
+      // a line the state machine is not using would warn about nothing.
+      enterThreshold: index.strainEnter,
     );
 
     if (index.isCalibrated) {
