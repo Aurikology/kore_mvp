@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:kore/app/trend_screen.dart';
 import 'package:kore/main.dart';
+import 'package:kore/session/kore_history.dart';
 import 'package:kore/session/kore_session.dart';
 import 'package:kore/theme/kore_theme.dart';
 import 'package:kore/widgets/check_in_sheet.dart';
+import 'package:kore/widgets/load_trend_card.dart';
 import 'package:kore/widgets/reset_protocol_sheet.dart';
 
 /// KORE only ever ran in a desktop window, so nothing stopped a widget from
@@ -115,6 +118,73 @@ void main() {
         expect(find.text('Skip'), findsOneWidget);
       });
     }
+  });
+
+  group('trend view', () {
+    final today = DateTime(2026, 8, 19);
+
+    /// [days] consecutive days ending today, each carrying enough measured
+    /// load to count. Two days is the sparsest state that still renders; sixty
+    /// overflows a thirty-day window, which is what puts the bar packing under
+    /// pressure at 320 px.
+    DailyLoadLog log(int days) => List.generate(days, (i) => i).fold(
+          DailyLoadLog.empty,
+          (log, i) => log.record(DailyLoad(
+            day: DateTime(today.year, today.month, today.day - i),
+            frames: 1200,
+            meanIndex: 40 + (i % 7) * 4,
+            peakIndex: 60 + (i % 7) * 4,
+          )),
+        );
+
+    for (final days in [2, 60]) {
+      sizes.forEach((name, size) {
+        testWidgets('the card holds $days days at $name', (tester) async {
+          await sized(tester, size);
+          await tester.pumpWidget(MaterialApp(
+            theme: KoreTheme.dark(),
+            home: Scaffold(
+              body: SingleChildScrollView(
+                child: LoadTrendCard(
+                  log: log(days),
+                  today: today,
+                  strainEnter: 78,
+                  thresholdsPersonalised: true,
+                  layout: KoreBreakpoints.classify(size),
+                  onOpen: () {},
+                ),
+              ),
+            ),
+          ));
+          await tester.pump();
+
+          expect(tester.takeException(), isNull);
+          // Whatever it can or cannot say about the trend, it says something.
+          expect(find.textContaining('load', findRichText: true).evaluate(),
+              isNotEmpty);
+        });
+      });
+    }
+
+    sizes.forEach((name, size) {
+      testWidgets('the screen lays out at $name', (tester) async {
+        await sized(tester, size);
+        await tester.pumpWidget(MaterialApp(
+          theme: KoreTheme.dark(),
+          home: TrendScreen(
+            log: log(60),
+            today: today,
+            strainEnter: 78,
+            thresholdsPersonalised: true,
+          ),
+        ));
+        await tester.pump();
+
+        expect(tester.takeException(), isNull);
+        expect(find.text('Load over time'), findsOneWidget);
+        expect(find.text('days measured'), findsOneWidget);
+      });
+    });
   });
 
   group('reset protocol', () {

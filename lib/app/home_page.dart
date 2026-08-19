@@ -8,8 +8,10 @@ import '../widgets/check_in_sheet.dart';
 import '../widgets/forecast_notice.dart';
 import '../widgets/load_meter.dart';
 import '../widgets/load_sparkline.dart';
+import '../widgets/load_trend_card.dart';
 import '../widgets/recovery_card.dart';
 import '../widgets/reset_protocol_sheet.dart';
+import 'trend_screen.dart';
 
 /// The live dashboard.
 ///
@@ -214,15 +216,54 @@ class _HomePageState extends State<HomePage> {
 
   /// Everything behind the reading. Same list on every layout; only where it
   /// sits changes.
-  List<Widget> _detail(BuildContext context, KoreWindow window) => [
-        _trendCard(context, window),
-        if (_session.resetHistory.completedCount > 0) ...[
-          const SizedBox(height: KoreSpace.md),
-          RecoveryCard(history: _session.resetHistory, today: DateTime.now()),
-        ],
-        const SizedBox(height: KoreSpace.lg),
-        _demoControls(context),
-      ];
+  ///
+  /// Ordered by zoom rather than by importance: the last two minutes, then the
+  /// last fortnight, then the record of resets. The two charts sit together
+  /// because they are the same quantity at two time scales, and reading them
+  /// in that order is what turns "I am at 62" into "and 62 is where I have
+  /// been all week".
+  List<Widget> _detail(BuildContext context, KoreWindow window) {
+    // One clock read for the whole list, so two cards in the same frame cannot
+    // disagree about which day it is.
+    final today = DateTime.now();
+
+    return [
+      _minutesCard(context, window),
+      // Gated here rather than only inside the card, following RecoveryCard's
+      // convention: the card owns no outer margin, so the layout that includes
+      // it owns the gap and an absent card leaves no hole.
+      if (!_session.dailyLoad.isEmpty) ...[
+        const SizedBox(height: KoreSpace.md),
+        LoadTrendCard(
+          log: _session.dailyLoad,
+          today: today,
+          // Live values, both of them. The card prints the threshold in its
+          // own sentence and the chart rules a line at it.
+          strainEnter: _session.strainEnter,
+          thresholdsPersonalised: _session.thresholdsPersonalised,
+          layout: window,
+          onOpen: () => _openTrend(today),
+        ),
+      ],
+      if (_session.resetHistory.completedCount > 0) ...[
+        const SizedBox(height: KoreSpace.md),
+        RecoveryCard(history: _session.resetHistory, today: today),
+      ],
+      const SizedBox(height: KoreSpace.lg),
+      _demoControls(context),
+    ];
+  }
+
+  void _openTrend(DateTime today) {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => TrendScreen(
+        log: _session.dailyLoad,
+        today: today,
+        strainEnter: _session.strainEnter,
+        thresholdsPersonalised: _session.thresholdsPersonalised,
+      ),
+    ));
+  }
 
   Widget _gauge(BuildContext context, KoreWindow window) {
     return LayoutBuilder(
@@ -335,7 +376,9 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _trendCard(BuildContext context, KoreWindow window) {
+  /// The two-minute view. Named for its span rather than for "trend", now that
+  /// there is a second trend surface underneath it measured in days.
+  Widget _minutesCard(BuildContext context, KoreWindow window) {
     final text = Theme.of(context).textTheme;
 
     return Card(

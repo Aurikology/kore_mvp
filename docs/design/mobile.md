@@ -70,12 +70,17 @@ user feels.
      |                                    |
      +------------------------------------+
      |
+     +--> TREND ... reached from the trend card, not from a tab bar
+     |
      v
   HISTORY ......... reached from the recovery card, not from a tab bar
 ```
 
-Five screens plus two sheets. That is the whole app, and it should stay that
+Six screens plus two sheets. That is the whole app, and it should stay that
 way; a second tab is a second decision to make before the first one is done.
+Both of the destinations off the dashboard are reached by tapping the card that
+is already showing a summary of them — the card is the affordance, and it is
+free, where a bottom bar costs a permanent choice on every screen.
 
 ## Screens
 
@@ -138,6 +143,13 @@ Compact layout, top to bottom:
   | LAST 2 MINUTES    thresh 70|
   |  ~~~~~~~~~~~~~-------~~~   |
   +----------------------------+
+  | LAST 14 DAYS   See 30 days |
+  | Your load is rising -      |
+  | about 5 points a week.     |
+  | Mean 54 across 6 days...   |
+  |  ..||.|--.|||.             |  <- one bar per day, gaps are gaps
+  |  5 Aug              Today  |
+  +----------------------------+
   | RECOVERY        3 in 7 days|
   |  4        18       4.2     |
   |  streak   drop     clarity |
@@ -191,6 +203,29 @@ not stranded at half height on a tall phone.
 The measurement line — *Your load rose 12 points* — stays in secondary text
 with no colour and no icon, exactly as the falling case does.
 
+### Trend — built
+
+The dashboard is where "what now?" is answered, and the trend is not that
+question — so it lives **below the fold**, under the two-minute sparkline, and
+never above the gauge. A phone glance is four seconds and it belongs to the
+reading.
+
+But it could not be *only* a separate screen either. Three of the four metrics
+the product is judged on are longitudinal, and reinforcement is step 4 of the
+loop; a longitudinal figure nobody opens reinforces nothing. So: **the card is
+the hook, the screen is the detail.** The card carries the whole claim in one
+sentence and a fortnight of bars, which is enough for the glance; the screen
+carries thirty days, the mean and the peak, and the footnote explaining what a
+day has to carry before it counts.
+
+The two order themselves by zoom rather than by importance — the last two
+minutes, then the last fortnight, then the record of resets. That is what turns
+"I am at 62" into "and 62 is where I have been all week".
+
+On `expanded` the card lands in the right-hand column with the rest of the
+detail list, so a desktop window shows both time scales in one glance and the
+screen is a convenience rather than the only way to see a month.
+
 ### History — designed, not built
 
 Reached from the recovery card, not from a tab bar. Two destinations do not
@@ -241,11 +276,30 @@ there. In rough order of how much the mobile design depends on them:
 2. **Connection state and battery** as a typed value rather than
    `sourceLabel`'s free-text string. The dashboard currently cannot say "the
    patch is not connected" as distinct from "your load is 0".
-3. **A persisted, downsampled index series.** `KoreSession.history` is 480
-   samples of a 120-second ring, and `HistoryStore` keeps only `ResetRecord`s.
-   A trends screen needs load per hour and per day, which means the index has
-   to be written somewhere, with gaps recorded as gaps rather than
-   interpolated over.
+3. **Today's rollup, before it is written.** `DailyLoadLog` now carries one
+   entry per measured day and the trend view renders it — but `dailyLoad`
+   excludes whatever the current session has measured since the last write, and
+   the session only writes when the baseline lands or a reset is committed. So
+   today's bar is missing from the chart for the whole of a session in which
+   the user never resets, which is most of them. A read-only view of the
+   in-flight accumulator — frames, mean, peak so far — would close it without
+   the UI reaching past the read model. The screen currently states this out
+   loud rather than hiding it.
+
+   The rest of the original ask here is delivered: gaps *are* recorded as gaps,
+   and the chart draws them as gaps. What is still missing is resolution finer
+   than a day — load per hour, for a user who wants to know when in the day
+   they crash.
+
+   Two smaller gaps in the same layer. `DailyLoadLog` publishes
+   `minFramesForTrend` and `trendPerDay`'s three-day refusal, but not **how
+   many days in a window qualify** — the refusal copy has to name that number
+   ("two days so far have"), so the widget re-derives the window boundary that
+   `_within` already owns. A `qualifyingDays(today, window)` getter would
+   remove the duplication. And `trendPerDay` returns a bare slope with no
+   goodness-of-fit, where the crash predictor returns an R² and uses it to stay
+   quiet; the trend view has nothing equivalent to lean on, so it withholds a
+   direction on magnitude alone.
 4. **`strainSince`** — the timestamp the current strain episode latched. The
    notification copy above says "for the last 6 minutes" and there is nothing
    to compute that from; `LoadState.strain` is a boolean-shaped fact.
