@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import '../dsp/cognitive_load_index.dart';
 import '../dsp/dsp_engine.dart';
 import '../dsp/dsp_engine_factory.dart';
+import '../dsp/focus_crash_predictor.dart';
 import '../services/eeg_data_stream.dart';
 import '../services/history_store.dart';
 import '../sources/simulated_eeg_source.dart';
@@ -24,6 +25,7 @@ class KoreSession extends ChangeNotifier {
   final SimulatedEegSource source;
   final DspEngine engine;
   final CognitiveLoadIndex index = CognitiveLoadIndex();
+  final FocusCrashPredictor predictor = FocusCrashPredictor();
 
   /// Null means history lives in memory for this run only. The real store is
   /// wired at the composition root (`main`), which keeps widget tests from
@@ -54,6 +56,15 @@ class KoreSession extends ChangeNotifier {
   LoadState get loadState => index.state;
 
   bool get isCalibrated => index.isCalibrated;
+
+  /// The near-future read on the same signal: is the index about to cross into
+  /// strain? Carries its own status and confidence, so the UI can distinguish
+  /// "nothing coming" from "cannot say yet".
+  CrashForecast get crashForecast => predictor.forecast;
+
+  /// The one bit the dashboard needs. A forecast is only actionable when it is
+  /// a warning; every other status is a reason to stay quiet.
+  bool get crashWarning => predictor.forecast.isWarning;
 
   double get calibrationProgress => index.calibrationProgress;
 
@@ -121,6 +132,11 @@ class KoreSession extends ChangeNotifier {
     if (frame == null) return; // no new analysis window yet
 
     index.update(frame);
+    predictor.observe(
+      index: index.value,
+      deviation: index.deviation,
+      state: index.state,
+    );
 
     if (index.isCalibrated) {
       _history.addLast(index.value);
@@ -225,6 +241,9 @@ class KoreSession extends ChangeNotifier {
 
   void recalibrate() {
     index.recalibrate();
+    // The forecast is denominated in index points, and those are about to mean
+    // something else.
+    predictor.reset();
     _history.clear();
     notifyListeners();
   }
