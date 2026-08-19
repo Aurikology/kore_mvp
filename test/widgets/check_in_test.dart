@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kore/session/reset_record.dart';
-import 'package:kore/theme.dart';
+import 'package:kore/theme/kore_theme.dart';
 import 'package:kore/widgets/check_in_sheet.dart';
 import 'package:kore/widgets/recovery_card.dart';
 
@@ -21,7 +21,7 @@ Future<_Outcome> _showSheet(WidgetTester tester, {double drop = 20}) async {
   final outcome = _Outcome();
 
   await tester.pumpWidget(MaterialApp(
-    theme: KoreTheme.darkTheme(),
+    theme: KoreTheme.dark(),
     home: Builder(
       builder: (context) => Scaffold(
         body: Center(
@@ -117,7 +117,7 @@ void main() {
       addTearDown(tester.view.reset);
 
       await tester.pumpWidget(MaterialApp(
-        theme: KoreTheme.darkTheme(),
+        theme: KoreTheme.dark(),
         home: Scaffold(
           body: RecoveryCard(history: history, today: today),
         ),

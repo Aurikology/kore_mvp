@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../theme.dart';
-import 'load_meter.dart';
+import '../theme/kore_theme.dart';
 
 /// Rolling history of the Cognitive Load Index.
 ///
@@ -19,12 +18,14 @@ class LoadSparkline extends StatelessWidget {
   const LoadSparkline({
     super.key,
     required this.values,
-    this.height = 88,
+    this.height = 72,
     this.thresholdLine,
   });
 
   @override
   Widget build(BuildContext context) {
+    final k = context.kore;
+
     return SizedBox(
       height: height,
       width: double.infinity,
@@ -32,6 +33,10 @@ class LoadSparkline extends StatelessWidget {
         painter: _SparklinePainter(
           values: values,
           thresholdLine: thresholdLine,
+          rule: k.border,
+          // The trace takes the colour of the *latest* reading, so the trend
+          // and the gauge always agree on what the state is.
+          trace: values.isEmpty ? k.unmeasured : k.forLoad(values.last),
         ),
       ),
     );
@@ -41,8 +46,15 @@ class LoadSparkline extends StatelessWidget {
 class _SparklinePainter extends CustomPainter {
   final List<double> values;
   final double? thresholdLine;
+  final Color rule;
+  final Color trace;
 
-  _SparklinePainter({required this.values, this.thresholdLine});
+  _SparklinePainter({
+    required this.values,
+    required this.rule,
+    required this.trace,
+    this.thresholdLine,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -50,12 +62,13 @@ class _SparklinePainter extends CustomPainter {
 
     if (thresholdLine != null) {
       final paint = Paint()
-        ..color = KoreTheme.border
+        ..color = rule
         ..strokeWidth = 1;
       final yy = y(thresholdLine!);
       // Dashed, so it reads as a reference rather than as data.
-      for (double x = 0; x < size.width; x += 10) {
-        canvas.drawLine(Offset(x, yy), Offset(x + 5, yy), paint);
+      for (double x = 0; x < size.width; x += KoreSparkline.dashPeriod) {
+        canvas.drawLine(
+            Offset(x, yy), Offset(x + KoreSparkline.dashMark, yy), paint);
       }
     }
 
@@ -76,8 +89,6 @@ class _SparklinePainter extends CustomPainter {
       ..lineTo(0, size.height)
       ..close();
 
-    final latestColor = LoadMeter.colorFor(values.last);
-
     canvas.drawPath(
       fill,
       Paint()
@@ -85,8 +96,8 @@ class _SparklinePainter extends CustomPainter {
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
           colors: [
-            latestColor.withValues(alpha: 0.22),
-            latestColor.withValues(alpha: 0.0),
+            trace.withValues(alpha: KoreSparkline.fillAlphaTop),
+            trace.withValues(alpha: 0.0),
           ],
         ).createShader(Offset.zero & size),
     );
@@ -95,21 +106,24 @@ class _SparklinePainter extends CustomPainter {
       path,
       Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 2
+        ..strokeWidth = KoreSparkline.strokeWidth
         ..strokeJoin = StrokeJoin.round
-        ..color = latestColor,
+        ..color = trace,
     );
 
     canvas.drawCircle(
       Offset((values.length - 1) * dx, y(values.last)),
-      3.5,
-      Paint()..color = latestColor,
+      KoreSparkline.headRadius,
+      Paint()..color = trace,
     );
   }
 
   @override
   bool shouldRepaint(_SparklinePainter old) =>
+      old.trace != trace ||
+      old.rule != rule ||
       old.values.length != values.length ||
-      (values.isNotEmpty && old.values.isNotEmpty &&
+      (values.isNotEmpty &&
+          old.values.isNotEmpty &&
           old.values.last != values.last);
 }

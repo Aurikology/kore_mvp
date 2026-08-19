@@ -2,14 +2,19 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
-import '../theme.dart';
+import '../theme/kore_theme.dart';
 
 /// Arc gauge for the Cognitive Load Index.
 ///
 /// Hand-rolled rather than pulled from a charting package: this gauge *is*
 /// the product surface, and a dependency would mean a generic look, an
 /// unvalidated Windows desktop build, and a fight to bend its defaults into
-/// the rust/sage palette - for about sixty lines of saved code.
+/// KORE's palette - for about sixty lines of saved code.
+///
+/// Four channels carry the reading, only one of which is colour: the numeral,
+/// the caption, the fraction of the arc that is filled, and the tick at the
+/// strain threshold. A user who cannot separate the ramp's hues loses nothing
+/// they need.
 class LoadMeter extends StatelessWidget {
   /// 0-100. Ignored while [calibrating].
   final double value;
@@ -19,6 +24,10 @@ class LoadMeter extends StatelessWidget {
   /// Seconds left in baseline capture, shown while [calibrating].
   final int calibrationSecondsRemaining;
 
+  /// Index value the tick is drawn at, so the number has a visible frame of
+  /// reference rather than being an unanchored 0-100.
+  final double strainThreshold;
+
   final double size;
 
   const LoadMeter({
@@ -26,137 +35,144 @@ class LoadMeter extends StatelessWidget {
     required this.value,
     this.calibrating = false,
     this.calibrationSecondsRemaining = 0,
-    this.size = 260,
+    this.strainThreshold = 70,
+    this.size = 240,
   });
-
-  /// Sage when calm, rust under load. Colour carries the same information as
-  /// the number, so the state is readable at a glance from across a room.
-  static Color colorFor(double value) =>
-      Color.lerp(KoreTheme.sage, KoreTheme.rust, (value / 100).clamp(0, 1))!;
 
   @override
   Widget build(BuildContext context) {
-    final color = calibrating ? KoreTheme.textSecondary : colorFor(value);
+    final k = context.kore;
+    final text = Theme.of(context).textTheme;
+    // Routed through forLoad so an uncalibrated gauge can never paint itself
+    // calm: with no baseline there is no reading to colour.
+    final color = k.forLoad(value, measured: !calibrating);
+    final numeral = KoreGauge.numeralSize(size);
 
-    return SizedBox(
-      width: size,
-      height: size,
-      child: TweenAnimationBuilder<double>(
-        // The index updates at 4 Hz; easing between frames makes it read as
-        // continuous rather than stepped.
-        duration: const Duration(milliseconds: 260),
-        curve: Curves.easeOut,
-        tween: Tween(begin: 0, end: calibrating ? 0 : value.clamp(0, 100)),
-        builder: (context, animated, _) {
-          return CustomPaint(
-            painter: _MeterPainter(
-              value: animated,
-              color: color,
-              indeterminate: calibrating,
-            ),
-            child: Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (calibrating) ...[
-                    Text(
-                      'CALIBRATING',
-                      style: Theme.of(context)
-                          .textTheme
-                          .labelMedium
-                          ?.copyWith(letterSpacing: 1.6),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      '${calibrationSecondsRemaining}s',
-                      style: KoreTheme.numerals(
-                          fontSize: size * 0.17,
-                          color: KoreTheme.textSecondary),
-                    ),
-                  ] else ...[
-                    Text(
-                      animated.round().toString(),
-                      style:
-                          KoreTheme.numerals(fontSize: size * 0.30, color: color),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'COGNITIVE LOAD',
-                      style: Theme.of(context)
-                          .textTheme
-                          .labelMedium
-                          ?.copyWith(letterSpacing: 1.6),
-                    ),
-                  ],
-                ],
+    return Semantics(
+      container: true,
+      label: calibrating
+          ? 'Establishing your baseline, '
+              '$calibrationSecondsRemaining seconds remaining'
+          : 'Cognitive load ${value.round()} out of 100',
+      excludeSemantics: true,
+      child: SizedBox(
+        width: size,
+        height: size,
+        child: TweenAnimationBuilder<double>(
+          // The index updates at 4 Hz; easing between frames makes it read as
+          // continuous rather than stepped.
+          duration: KoreMotion.respecting(context, KoreMotion.gauge),
+          curve: KoreMotion.enter,
+          tween: Tween(begin: 0, end: calibrating ? 0 : value.clamp(0, 100)),
+          builder: (context, animated, _) {
+            return CustomPaint(
+              painter: _MeterPainter(
+                value: animated,
+                color: color,
+                track: k.border,
+                tick: k.textSecondary,
+                thresholdFraction:
+                    KoreGauge.thresholdFraction(strainThreshold),
+                indeterminate: calibrating,
               ),
-            ),
-          );
-        },
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (calibrating) ...[
+                      Text(
+                        'CALIBRATING',
+                        style: text.labelMedium
+                            ?.copyWith(letterSpacing: KoreType.trackedLabel),
+                      ),
+                      SizedBox(height: KoreGauge.captionGap(size)),
+                      Text(
+                        '${calibrationSecondsRemaining}s',
+                        style: KoreType.numerals(
+                            fontSize: numeral * 0.56, color: color),
+                      ),
+                    ] else ...[
+                      Text(
+                        animated.round().toString(),
+                        style:
+                            KoreType.numerals(fontSize: numeral, color: color),
+                      ),
+                      SizedBox(height: KoreGauge.captionGap(size)),
+                      Text(
+                        'COGNITIVE LOAD',
+                        style: text.labelMedium
+                            ?.copyWith(letterSpacing: KoreType.trackedLabel),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
       ),
     );
   }
 }
 
 class _MeterPainter extends CustomPainter {
-  static const double _startAngle = math.pi * 0.75; // 135 deg
-  static const double _sweep = math.pi * 1.5; // 270 deg
-
   final double value;
   final Color color;
+  final Color track;
+  final Color tick;
+  final double thresholdFraction;
   final bool indeterminate;
 
   _MeterPainter({
     required this.value,
     required this.color,
+    required this.track,
+    required this.tick,
+    required this.thresholdFraction,
     required this.indeterminate,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
-    const stroke = 14.0;
-    final rect = Offset.zero & size;
-    final arcRect = rect.deflate(stroke / 2 + 6);
-
-    final track = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = stroke
-      ..strokeCap = StrokeCap.round
-      ..color = KoreTheme.border;
-
-    canvas.drawArc(arcRect, _startAngle, _sweep, false, track);
-
-    if (indeterminate) return;
-
-    final progress = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = stroke
-      ..strokeCap = StrokeCap.round
-      ..color = color;
+    final stroke = KoreGauge.stroke(size.shortestSide);
+    final arcRect = (Offset.zero & size).deflate(stroke / 2 + 6);
 
     canvas.drawArc(
       arcRect,
-      _startAngle,
-      _sweep * (value / 100).clamp(0.0, 1.0),
+      KoreGauge.startAngle,
+      KoreGauge.sweep,
       false,
-      progress,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = stroke
+        ..strokeCap = StrokeCap.round
+        ..color = track,
     );
 
-    // Tick at the strain threshold, so the number has a visible frame of
-    // reference rather than being an unanchored 0-100.
-    final tickAngle = _startAngle + _sweep * 0.70;
+    if (indeterminate) return;
+
+    canvas.drawArc(
+      arcRect,
+      KoreGauge.startAngle,
+      KoreGauge.sweep * (value / 100).clamp(0.0, 1.0),
+      false,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = stroke
+        ..strokeCap = StrokeCap.round
+        ..color = color,
+    );
+
+    final angle = KoreGauge.startAngle + KoreGauge.sweep * thresholdFraction;
     final center = arcRect.center;
     final r = arcRect.width / 2;
-    final inner = center +
-        Offset(math.cos(tickAngle), math.sin(tickAngle)) * (r - stroke / 2 - 3);
-    final outer = center +
-        Offset(math.cos(tickAngle), math.sin(tickAngle)) * (r + stroke / 2 + 3);
+    final unit = Offset(math.cos(angle), math.sin(angle));
 
     canvas.drawLine(
-      inner,
-      outer,
+      center + unit * (r - stroke / 2 - 3),
+      center + unit * (r + stroke / 2 + 3),
       Paint()
-        ..color = KoreTheme.textSecondary.withValues(alpha: 0.6)
+        ..color = tick.withValues(alpha: 0.6)
         ..strokeWidth = 2,
     );
   }
@@ -165,5 +181,8 @@ class _MeterPainter extends CustomPainter {
   bool shouldRepaint(_MeterPainter old) =>
       old.value != value ||
       old.color != color ||
+      old.track != track ||
+      old.tick != tick ||
+      old.thresholdFraction != thresholdFraction ||
       old.indeterminate != indeterminate;
 }
