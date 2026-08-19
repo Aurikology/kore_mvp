@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import '../services/signal_quality.dart';
 import 'band_powers.dart';
 import 'dsp_engine.dart';
 import 'load_profile.dart';
@@ -107,6 +108,7 @@ class CognitiveLoadIndex {
   bool _hasCli = false;
   int _framesAboveEnter = 0;
   LoadState _state = LoadState.calibrating;
+  SignalQualityLevel _quality = SignalQualityLevel.good;
 
   /// [profile] is what previous runs of the app left behind. The default is a
   /// user it has never seen, and reproduces the constants above exactly.
@@ -120,6 +122,19 @@ class CognitiveLoadIndex {
   LoadState get state => _state;
 
   bool get isCalibrated => _mu != null;
+
+  /// Whether [value] is a live measurement rather than the last one taken from
+  /// a signal worth believing.
+  ///
+  /// Deliberately *not* a fourth [LoadState]. Load state answers "how loaded is
+  /// this person"; this answers "can we see them at all", and the two are
+  /// orthogonal - folding an absence of measurement into an enum of
+  /// measurements puts "no signal" in the same slot a reading goes, which is
+  /// how it ends up rendered as one. Every consumer has to check both.
+  bool get isReadingTrustworthy => _quality != SignalQualityLevel.unusable;
+
+  /// The quality of the most recent frame, as the caller reported it.
+  SignalQualityLevel get signalQuality => _quality;
 
   /// 0.0 -> 1.0 through the baseline capture.
   double get calibrationProgress => _mu != null
@@ -180,11 +195,54 @@ class CognitiveLoadIndex {
       _profile.indexFrames >= kFramesBeforePersonalising;
 
   /// Feed one analysis frame. Call once per [BandPowers] produced.
-  void update(BandPowers p) {
+  ///
+  /// [quality] is the source's verdict on the samples this frame was built
+  /// from, already widened to the whole analysis window by
+  /// `SignalQualityGate`. It defaults to [SignalQualityLevel.good] so a caller
+  /// with no quality information behaves exactly as this class always has -
+  /// which is what keeps every published figure reproducible.
+  ///
+  /// Three different things happen to three different qualities, and the
+  /// asymmetry is the point:
+  ///
+  /// - **good** - everything proceeds.
+  /// - **degraded** - the reading publishes, but the baseline capture refuses
+  ///   the frame. One degraded reading costs one reading; a baseline captured
+  ///   from degraded frames is the reference every reading for the rest of the
+  ///   session is measured against, and there is no recovering from it.
+  /// - **unusable** - the index freezes. No new value, no state change, no
+  ///   profile learning, and the strain latch is withdrawn. Freezing rather
+  ///   than publishing a zero or a NaN is what lets a gauge keep painting
+  ///   something while [isReadingTrustworthy] tells it not to claim the number
+  ///   is current.
+  void update(
+    BandPowers p, {
+    SignalQualityLevel quality = SignalQualityLevel.good,
+  }) {
+    _quality = quality;
+
+    if (quality == SignalQualityLevel.unusable) {
+      // Withdraw the strain claim rather than holding it. Strain is an
+      // assertion that this person is under sustained load; the instant the
+      // signal stops supporting it, the honest move is to stop asserting it -
+      // and the case this is built for is precisely an electrode that fell off
+      // while the index was reading high because of the fall. Re-earning it
+      // costs the usual dwell once the signal is back.
+      if (_state == LoadState.strain) _state = LoadState.steady;
+      _framesAboveEnter = 0;
+      return;
+    }
+
     final r = math.log((p.theta + _eps) / (p.alpha + _eps));
     _lastR = r;
 
     if (_mu == null) {
+      // A baseline may only be defined from a signal with nothing wrong with
+      // it. A capture taken through a slipping electrode poisons every reading
+      // that follows it, so the capture stalls instead - visibly, since
+      // [calibrationProgress] stops moving.
+      if (quality != SignalQualityLevel.good) return;
+
       _baselineSamples.add(r);
       if (_baselineSamples.length >= _calibrationFrames) {
         _adoptBaseline(
@@ -267,5 +325,6 @@ class CognitiveLoadIndex {
     _cli = 0;
     _hasCli = false;
     _lastR = 0;
+    _quality = SignalQualityLevel.good;
   }
 }

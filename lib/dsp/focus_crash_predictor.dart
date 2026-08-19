@@ -167,16 +167,27 @@ class FocusCrashPredictor {
   /// baseline, i.e. [CognitiveLoadIndex.deviation]. [enterThreshold] is passed
   /// in rather than read from a constant so a personalised threshold forecasts
   /// against itself.
+  ///
+  /// [signalUsable] false is treated exactly as calibration is: the trajectory
+  /// is dropped and nothing is published. It reports through
+  /// [CrashForecast.silent] rather than earning a sixth status, because the
+  /// answer to *why* the forecast went quiet belongs to the signal-quality
+  /// getters - and every existing switch over these five statuses would
+  /// otherwise have to grow an arm to restate what a quality flag already
+  /// says.
   void observe({
     required double index,
     required double deviation,
     required LoadState state,
     double enterThreshold = CognitiveLoadIndex.kStrainEnter,
+    bool signalUsable = true,
   }) {
-    if (state == LoadState.calibrating || !index.isFinite) {
+    if (state == LoadState.calibrating || !signalUsable || !index.isFinite) {
       // Nothing collected during calibration is usable: the index is not
       // defined against a baseline yet, so a window spanning the moment the
-      // baseline lands would fit a line to a discontinuity.
+      // baseline lands would fit a line to a discontinuity. A window spanning
+      // a stretch of unusable signal has the same defect for the same reason,
+      // and a forecast fitted across one warns about the electrode.
       _window.clear();
       _framesConfirming = 0;
       _forecast = CrashForecast.silent;
