@@ -263,6 +263,90 @@ Answers "where was I heading", which is what makes a reset visibly work.
 - The x-axis always spans the full history capacity, so the trace advances
   across the panel as data arrives instead of rescaling under the viewer.
 
+### Daily trend — `LoadTrendCard`, `LoadTrendChart`
+
+The sparkline answers "where was I heading" over two minutes. This answers the
+question three of the four key metrics are denominated in — *is this getting
+better or worse over weeks* — and it is a **different chart, not a longer one**.
+
+*Bars, not a line.* A line between two daily means claims the reading passed
+through the values in between, and nobody wears a patch for a fortnight without
+taking it off. Separate bars claim only what was observed, and a day with no
+bar is visibly a day with no data rather than a dip.
+
+*A fixed 0–100 scale, never fitted to the data in view.* Rescaling would draw a
+calm fortnight and a strained one identically and would move the threshold rule
+every week.
+
+| Property | Value |
+|---|---|
+| Span | 14 days on the dashboard card, 30 on the screen |
+| Height | 96 compact / 88 medium / 104 expanded |
+| Bar | `slot × 0.72`, clamped 3–24, centred in its slot |
+| Bar colour | ramp at that day's mean; `unmeasured` at 40% for a day below the log's minimum |
+| Peak cap | 2 px rule at the day's peak, same colour at 55% |
+| Threshold rule | dashed at `session.strainEnter`, the same 5-on-5-off the sparkline uses, from the same pair of tokens |
+| Empty day | nothing drawn |
+
+`KoreTrend.cardSpan` is also the window the slope is fitted over, so the
+sentence and the bars under it can never be describing different fortnights.
+
+**The card's span is a token, not a call-site number**, for the same reason the
+gauge's stroke is: the card and the screen are one component at two spans.
+
+#### Stating a trend in words
+
+`TrendStatement` is a pure function over the log, separated from the widget for
+the same reason `ForecastNotice.phrase` is — the copy *is* the honesty rule, and
+a rule that can only be checked by rendering pixels does not get checked.
+
+| Case | Headline | Detail |
+|---|---|---|
+| ≥3 qualifying days, \|slope\| ≥ 1 pt/week | `Your load is rising — about 5 points a week.` | `Mean 54 across 6 measured days, against your threshold of 78.` |
+| ≥3 qualifying days, below that | `Your load is holding steady over the last 14 days.` | as above |
+| <3 qualifying days | `Not enough measured days to call a trend.` | `Two days so far have a full minute of measured load. A trend needs 3, so KORE is not drawing a line through fewer.` |
+| nothing in the window | `Nothing measured in the last 14 days.` | as above |
+
+Four decisions in that table:
+
+- **Points per week, not per day.** The log fits index points per *day*, which
+  for a real user is a fraction. `0.67` is not a sentence anyone reads.
+- **No direction below one point a week.** The same call the forecast makes
+  rounding to five seconds: this is a least-squares line through at most a
+  fortnight of daily means, and half a point is inside the noise of when
+  somebody happened to open the app.
+- **"rising" and "easing", never "worse" and "better".** The sentence describes
+  the number; it does not grade the person behind it.
+- **A rising trend is rendered exactly as a falling one** — `titleMedium` in
+  `textPrimary`, no tint, no icon, no arrow. This is the place someone would
+  reach for an alarm colour and there is not one to reach for. A test asserts
+  the two directions come out in the same style.
+
+The *numbers* underneath still take the ramp: mean load and highest reading are
+readings, and a reading's colour is where it sits on the ramp. The distinction
+the palette holds is between colouring a **measurement** (fine, that is what the
+ramp is) and colouring a **direction** (never — that would be a verdict).
+
+#### Degrading with little data
+
+`DailyLoadLog` refuses a slope below three qualifying days, and a day only
+qualifies at `minFramesForTrend` — one minute of measured load. The view honours
+both refusals rather than routing around them:
+
+- **Empty log → the card is not rendered at all**, exactly as `RecoveryCard` is
+  not. On a first launch there is no history to explain, and "not enough data"
+  on a screen the user has had open for fifteen seconds teaches them the feature
+  is dead weight.
+- **One measured day onward → the card is always present and always says what
+  it is waiting for.** What it must never do is either of the two failure
+  modes: an empty frame, or a line through two points.
+- **Days that did not qualify are still drawn, muted.** That is what makes the
+  refusal legible — the user can *see* the three short days the sentence is
+  talking about instead of being told a number they cannot locate. The full
+  screen spells the rule out in a footnote.
+- The mean and the peak still print, because those are honest at any sample
+  size. Only the *direction* is withheld.
+
 ### Reset protocol — `ResetProtocolSheet`
 
 A full-screen route, deliberately almost empty. It is shown to someone who has

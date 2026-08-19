@@ -71,6 +71,63 @@ class KoreSparkline {
       };
 }
 
+class KoreTrend {
+  KoreTrend._();
+
+  /// Days on the dashboard card and on the full screen.
+  ///
+  /// The card's span is also the window the slope is fitted over, so the
+  /// sentence and the bars beneath it can never be describing different
+  /// fortnights.
+  static const int cardSpan = 14;
+  static const int screenSpan = 30;
+
+  /// Taller than the sparkline: this one carries two channels per day and a
+  /// bar has to be tall enough for the height difference between two adjacent
+  /// days to be visible at all.
+  static double height(KoreWindow window) => switch (window) {
+        KoreWindow.compact => 96,
+        KoreWindow.medium => 88,
+        KoreWindow.expanded => 104,
+      };
+
+  /// Gap between bars, as a fraction of the slot each day gets. Kept
+  /// proportional so thirty days on a phone and fourteen on a desktop column
+  /// read as the same chart at two densities.
+  static const double barGap = 0.28;
+  static const double barMinWidth = 3;
+
+  /// Bars stop widening well before the slot does. In the desktop layout's
+  /// right-hand column a fortnight has 40 px per day, and a 40 px bar is a
+  /// block rather than a reading - the eye compares heights better across
+  /// narrow marks than wide ones.
+  static const double barMaxWidth = 24;
+  static const double barRadius = 2;
+
+  /// A day carrying less than `DailyLoadLog.minFramesForTrend` is drawn, but
+  /// muted, because its mean is dominated by the moment the app happened to be
+  /// open. Drawing it is what makes the refusal legible: the user can see
+  /// which days did not count rather than being told a number they cannot
+  /// locate.
+  static const double shortDayAlpha = 0.4;
+
+  /// The day's peak, as a cap above the mean bar. Quieter than the bar because
+  /// the mean is the reading and the peak is its context.
+  static const double peakAlpha = 0.55;
+  static const double peakCapHeight = 2;
+
+  /// The same reference rule the sparkline draws, from one pair of values so
+  /// the two charts on the dashboard cannot drift apart.
+  static const double dashPeriod = KoreSparkline.dashPeriod;
+  static const double dashMark = KoreSparkline.dashMark;
+
+  static double barWidth(double available, int slots) {
+    if (slots <= 0) return barMinWidth;
+    return ((available / slots) * (1 - barGap))
+        .clamp(barMinWidth, barMaxWidth);
+  }
+}
+
 class KoreBreath {
   KoreBreath._();
 
