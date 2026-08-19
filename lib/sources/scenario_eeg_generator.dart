@@ -12,6 +12,11 @@ import 'dart:math' as math;
 ///
 ///   load 0.15 ->  alpha 630 uV^2, theta  71 uV^2  ->  CLI ~27
 ///   load 0.90 ->  alpha  85 uV^2, theta 493 uV^2  ->  CLI ~81
+///
+/// It also models the *electrode*, not only the brain behind it. Turning
+/// [contact] down fades the physiological signal out and a large sub-alpha
+/// artifact in, which reproduces the failure that makes signal quality
+/// necessary at all - see `docs/signal-quality.md`.
 class ScenarioEEGGenerator {
   final double sampleRateHz;
   final math.Random _random;
@@ -33,11 +38,24 @@ class ScenarioEEGGenerator {
   // instantaneous frequency and smear the bands.
   double _phaseAlpha = 0, _phaseTheta = 0, _phaseBeta = 0, _phaseMains = 0;
 
+  // Contact-artifact phases, integrated on every sample whatever the contact
+  // is, so re-seating an electrode does not produce a phase step - and so the
+  // artifact costs no draws from [_random], which keeps every seeded figure in
+  // the tests and the README reproducible.
+  double _phaseDrift = 0, _phaseSway = 0, _phaseSlip = 0, _phaseTug = 0;
+
   // Pink-noise filter state (Paul Kellet's approximation).
   double _p0 = 0, _p1 = 0, _p2 = 0;
 
   final double noiseRmsUv;
   final double mainsAmplitudeUv;
+
+  /// Peak amplitude of the contact-loss artifact. Several times the
+  /// physiological signal on purpose: a floating electrode picks up its own
+  /// half-cell potential and every movement of the lead, and that is large.
+  final double artifactAmplitudeUv;
+
+  double _contact = 1.0;
 
   ScenarioEEGGenerator({
     this.sampleRateHz = 256.0,
@@ -45,12 +63,23 @@ class ScenarioEEGGenerator {
     this.tauSeconds = 4.0,
     this.noiseRmsUv = 12.0,
     this.mainsAmplitudeUv = 3.0,
+    this.artifactAmplitudeUv = 150.0,
     int? seed,
   })  : _load = initialLoad,
         loadTarget = initialLoad,
         _random = math.Random(seed);
 
   double get load => _load;
+
+  /// Electrode-skin coupling, 0 (off the head) to 1 (perfect).
+  ///
+  /// At 1.0 the output is bit-for-bit what it was before contact existed: the
+  /// physiological signal is scaled by exactly 1 and the artifact by exactly
+  /// 0. That identity is what lets quality handling be invisible when quality
+  /// is fine.
+  double get contact => _contact;
+
+  set contact(double value) => _contact = value.clamp(0.0, 1.0);
 
   double get elapsedSeconds => _sampleIndex / sampleRateHz;
 
@@ -85,6 +114,17 @@ class ScenarioEEGGenerator {
     _phaseBeta += 2 * math.pi * fBeta * dt;
     _phaseMains += 2 * math.pi * 60.0 * dt;
 
+    // The artifact of a failing electrode. Two of its four components sit
+    // inside the theta band and none sit inside alpha, which is not a
+    // convenience - it is the physics that makes this dangerous. Motion and
+    // half-cell drift are concentrated below ~7 Hz, so an electrode coming
+    // off pushes theta up while the alpha it is no longer picking up falls
+    // away: the cognitive-load signature, produced by nobody's brain.
+    _phaseDrift += 2 * math.pi * 0.6 * dt;
+    _phaseSway += 2 * math.pi * 2.7 * dt;
+    _phaseSlip += 2 * math.pi * 5.3 * dt;
+    _phaseTug += 2 * math.pi * 6.8 * dt;
+
     // Slow amplitude "breathing", so band power is never perfectly steady.
     double breathe(double periodS, double phase) =>
         1 + 0.25 * math.sin(2 * math.pi * t / periodS + phase);
@@ -95,10 +135,25 @@ class ScenarioEEGGenerator {
 
     _sampleIndex++;
 
-    return signal +
+    // Coupling scales the brain and its complement scales the artifact, so
+    // full contact leaves the sum exactly equal to the physiological signal.
+    final loss = 1.0 - _contact;
+    final scalp = loss > 0
+        ? signal * _contact + _contactArtifact() * loss
+        : signal;
+
+    return scalp +
         _pinkNoise() * noiseRmsUv +
         mainsAmplitudeUv * math.sin(_phaseMains);
   }
+
+  /// What a floating electrode produces instead of EEG.
+  double _contactArtifact() =>
+      artifactAmplitudeUv *
+      (math.sin(_phaseDrift) +
+          0.7 * math.sin(_phaseSway) +
+          0.55 * math.sin(_phaseSlip) +
+          0.4 * math.sin(_phaseTug));
 
   /// Pink-ish (1/f) background, closer to real EEG than white noise.
   /// Returns roughly unit RMS.
@@ -113,6 +168,7 @@ class ScenarioEEGGenerator {
   void reset() {
     _sampleIndex = 0;
     _phaseAlpha = _phaseTheta = _phaseBeta = _phaseMains = 0;
+    _phaseDrift = _phaseSway = _phaseSlip = _phaseTug = 0;
     _p0 = _p1 = _p2 = 0;
   }
 }
