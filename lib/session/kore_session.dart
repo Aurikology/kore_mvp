@@ -7,9 +7,11 @@ import '../dsp/cognitive_load_index.dart';
 import '../dsp/dsp_engine.dart';
 import '../dsp/dsp_engine_factory.dart';
 import '../dsp/focus_crash_predictor.dart';
+import '../dsp/load_profile.dart';
 import '../services/eeg_data_stream.dart';
 import '../services/history_store.dart';
 import '../sources/simulated_eeg_source.dart';
+import 'kore_history.dart';
 import 'reset_record.dart';
 
 /// Owns the live pipeline: source -> DSP engine -> Cognitive Load Index.
@@ -41,9 +43,17 @@ class KoreSession extends ChangeNotifier {
   Timer? _resetTimer;
 
   ResetHistory _resetHistory = ResetHistory.empty;
+  DailyLoadLog _days = DailyLoadLog.empty;
   _PendingReset? _pending;
   DateTime? _startedAt;
   double _loadBefore = 0;
+
+  // Today's rollup, accumulated over calibrated frames and folded into [_days]
+  // whenever the session writes. Held separately rather than recomputed from
+  // [_history] because that queue is 120 s long and a day is not.
+  int _dayFrames = 0;
+  double _daySum = 0;
+  double _dayPeak = 0;
 
   KoreSession({SimulatedEegSource? source, DspEngine? engine, this.store})
       : source = source ?? SimulatedEegSource(),
@@ -83,6 +93,15 @@ class KoreSession extends ChangeNotifier {
 
   ResetHistory get resetHistory => _resetHistory;
 
+  /// The longitudinal record, for anything that wants a trend rather than a
+  /// reading. Excludes whatever today's session has measured since the last
+  /// write; [flushState] brings it up to date.
+  DailyLoadLog get dailyLoad => _days;
+
+  /// The user's persistent baseline and thresholds, as this session has left
+  /// them.
+  LoadProfile get loadProfile => index.profile;
+
   /// A finished reset is waiting to be written. The check-in is only offered
   /// for a protocol that actually ran to the end - asking "did that help?"
   /// after a four-second abort would collect noise and call it a metric.
@@ -109,10 +128,14 @@ class KoreSession extends ChangeNotifier {
 
   Future<void> start() async {
     // Load first so the dashboard shows the real streak on the first frame
-    // rather than flashing a zero and correcting itself.
-    final loaded = await store?.load();
+    // rather than flashing a zero and correcting itself - and, since this
+    // completes before a single sample arrives, so the baseline capture that
+    // is about to start is checked against the profile it should be.
+    final loaded = await store?.loadDocument();
     if (loaded != null) {
-      _resetHistory = loaded;
+      _resetHistory = loaded.resets;
+      _days = loaded.days;
+      index.adoptProfile(loaded.profile);
       notifyListeners();
     }
 
@@ -131,6 +154,8 @@ class KoreSession extends ChangeNotifier {
     final frame = engine.takeFrame();
     if (frame == null) return; // no new analysis window yet
 
+    final wasCalibrated = index.isCalibrated;
+
     index.update(frame);
     predictor.observe(
       index: index.value,
@@ -146,7 +171,22 @@ class KoreSession extends ChangeNotifier {
       while (_history.length > historyLength) {
         _history.removeFirst();
       }
+
+      // [wasCalibrated], not [index.isCalibrated]: the frame that *completes*
+      // the capture has not produced an index yet, and folding its zero into
+      // the day's mean would be recording a reading that never happened.
+      if (wasCalibrated) {
+        _dayFrames++;
+        _daySum += index.value;
+        if (index.value > _dayPeak) _dayPeak = index.value;
+      }
     }
+
+    // Write the moment the baseline lands. Most sessions never take a reset,
+    // and those are exactly the sessions the profile has to learn from - if
+    // the only write were on commitReset, a user who never needs a reset would
+    // never accumulate a personal threshold.
+    if (!wasCalibrated && index.isCalibrated) unawaited(flushState());
 
     notifyListeners();
   }
@@ -225,9 +265,47 @@ class KoreSession extends ChangeNotifier {
     final store = this.store;
     _resetHistory = store == null
         ? _resetHistory.add(record)
-        : await store.append(_resetHistory, record);
+        : await store.append(
+            _resetHistory,
+            record,
+            profile: index.profile,
+            days: _foldToday(),
+          );
 
     notifyListeners();
+  }
+
+  /// Persist the personal profile and today's rollup without a reset attached.
+  /// Safe to call at any time, and a no-op with no store.
+  Future<void> flushState() async {
+    final store = this.store;
+    if (store == null) {
+      _foldToday();
+      return;
+    }
+    await store.saveState(profile: index.profile, days: _foldToday());
+  }
+
+  /// Fold what this session has measured so far into the daily log and clear
+  /// the accumulator, so repeated writes over one session do not count the
+  /// same frames twice. Frames are attributed to the day they are *written*,
+  /// which mis-files a session running across midnight - a day's resolution
+  /// does not justify carrying a per-frame timestamp to fix it.
+  DailyLoadLog _foldToday() {
+    if (_dayFrames == 0) return _days;
+
+    final now = DateTime.now();
+    _days = _days.record(DailyLoad(
+      day: DateTime(now.year, now.month, now.day),
+      frames: _dayFrames,
+      meanIndex: _daySum / _dayFrames,
+      peakIndex: _dayPeak,
+    ));
+
+    _dayFrames = 0;
+    _daySum = 0;
+    _dayPeak = 0;
+    return _days;
   }
 
   /// Demo control: drive the simulation directly rather than waiting on the

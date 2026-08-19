@@ -141,6 +141,19 @@ class CognitiveLoadIndex {
   /// to it. This is the value to persist.
   LoadProfile get profile => _profile;
 
+  /// Adopt a profile that arrived from disk after construction, which is how
+  /// it always arrives - the store read is asynchronous and the index is not.
+  ///
+  /// Returns false, and changes nothing, once the baseline capture has begun:
+  /// the profile decides both what the thresholds are and what the capture is
+  /// checked against, so swapping it mid-capture would leave one session
+  /// measuring against two different users.
+  bool adoptProfile(LoadProfile profile) {
+    if (_mu != null || _baselineSamples.isNotEmpty) return false;
+    _profile = profile;
+    return true;
+  }
+
   /// The user's own strain threshold.
   ///
   /// A user whose index habitually sits at 78 is not in strain at 70 - they
