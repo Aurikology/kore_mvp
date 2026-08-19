@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../session/kore_session.dart';
 import '../theme/kore_theme.dart';
@@ -34,6 +37,9 @@ class _ResetProtocolSheetState extends State<ResetProtocolSheet>
   /// Guards against popping twice. See [_onSession].
   bool _leaving = false;
 
+  /// Which quarter of the cycle the last haptic fired on. See [_pulse].
+  int _lastPhase = -1;
+
   @override
   void initState() {
     super.initState();
@@ -41,6 +47,22 @@ class _ResetProtocolSheetState extends State<ResetProtocolSheet>
     // Mutating it here would notify listeners during the build phase and
     // mark the dashboard's AnimatedBuilder dirty mid-build.
     widget.session.addListener(_onSession);
+    _controller.addListener(_pulse);
+  }
+
+  /// A tap at each phase boundary, so the protocol can be followed with the
+  /// screen face down. The positioning docs call KORE a *screenless* focus
+  /// system; a minute spent staring at a phone to know when to breathe out is
+  /// the opposite of that, and the circle should be the fallback channel
+  /// rather than the only one.
+  void _pulse() {
+    final phase = (_controller.value * 4).floor().clamp(0, 3);
+    if (phase == _lastPhase) return;
+    _lastPhase = phase;
+    // Fire and forget, and swallow the failure: the desktop embedder has no
+    // haptics and answers this channel with notImplemented. A missing motor
+    // is not an error worth surfacing mid-reset.
+    unawaited(HapticFeedback.lightImpact().catchError((Object _) {}));
   }
 
   void _onSession() {
@@ -63,6 +85,7 @@ class _ResetProtocolSheetState extends State<ResetProtocolSheet>
   @override
   void dispose() {
     widget.session.removeListener(_onSession);
+    _controller.removeListener(_pulse);
     _controller.dispose();
     super.dispose();
   }
