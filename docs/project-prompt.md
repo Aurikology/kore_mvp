@@ -26,7 +26,7 @@ this phase, not a treatment, not a generic meditation app.
 
 A **Flutter desktop app** running on Windows. Real DSP, simulated electrode —
 the signal processing is genuine; only the EEG source is synthetic. There is
-no server, no accounts, no network. 135 tests pass.
+no server, no accounts, no network. 185 tests pass.
 
 **Signal chain** (`lib/dsp/`), 256 Hz microvolt samples:
 - One-pole DC blocker at 0.5 Hz.
@@ -122,6 +122,34 @@ never the only channel — numeral, state word, arc fill and threshold tick all
 carry the reading. There is deliberately **no alarm colour** in the palette:
 KORE states a bad reading plainly and never alarms about it.
 
+**Signal quality** (`lib/services/signal_quality.dart`,
+`lib/session/signal_quality_gate.dart`). The hazard this exists for: a detached
+electrode produces theta-up and alpha-down, which is the cognitive-load
+signature exactly — so a bad electrode does not produce an obviously broken
+reading, it produces a *plausible* one. `test/dsp/electrode_artifact_test.dart`
+demonstrates it on the real DSP chain: with quality ignored, a floating
+electrode reads past 70 and latches strain, and the app would have offered a
+reset for it.
+
+`SignalQuality` rides on every block (attributable — a separate channel races
+and can label the block taken while the electrode was already off), with a
+`qualityUpdates` stream alongside it because a dropped link sends no blocks at
+all. Every measurement is **nullable when it cannot be taken**: a front end
+with no impedance channel reports `null`, never a fabricated 1.0, and
+`contactMeasured` stops "not measured" rendering as "good". `SignalQualityGate`
+widens the per-block report to the 512-sample analysis window and requires a
+full clean window before believing a frame again.
+
+The policy, per consumer: the index **holds its last value, flagged** (a gauge
+painting nothing is worse than one painting a number labelled stale); strain is
+**withdrawn**, not held, because the case this exists for is an electrode that
+fell off while the index was high *because* it fell off; the sparkline, daily
+rollup, profile learning and predictor **take nothing**, since a held value in
+a trend reads as a measurement of calm; a reset with one unusable frame
+anywhere in its 60 s is **not logged at all**; and baseline capture accepts
+`good` frames only, stalling rather than restarting. Reasoning and rejected
+alternatives in `docs/signal-quality.md`.
+
 **Responsive layout** — the dashboard builds one widget list into three
 layouts by *window class, not platform*, so a narrow desktop window gets the
 phone layout. Regression-tested at seven widths from 320 px to 1920 px.
@@ -151,7 +179,7 @@ lib/theme/     design tokens: primitives, colours, metrics, components
 lib/widgets/   gauge, sparkline, reset protocol, check-in, recovery
 lib/app/       the dashboard shell and its three responsive layouts
 cpp/           native DSP (C++/FFI), built into the Windows bundle
-test/          135 tests
+test/          185 tests
 docs/          product narrative, positioning, design specs, hardware seam
 landing-page/  static marketing site (Netlify)
 tool/          cli_probe.dart, for tuning the index offline
@@ -170,10 +198,11 @@ Stack: Flutter/Dart, zero plugins, bundled fonts. Targets present: `windows/`
 - **The daily trend is not rendered.** `dailyLoad` is on `KoreSession` and
   nothing shows it, so the longitudinal record the store now keeps is only
   visible in the file. The forecast and the personal threshold *are* on screen.
-- **Electrode contact quality**, which the source cannot report at all. This is
-  the dangerous gap: a loose electrode produces theta-up/alpha-down — exactly
-  the load signature — so the app cannot currently distinguish a calm reading
-  from a detached one.
+- **Multi-channel signal quality.** The quality path is single-channel; a
+  four-electrode patch will need per-channel reports and a combining rule.
+- **A stall watchdog.** If a source stops emitting *and* says nothing, quality
+  holds its last value. `qualityUpdates` is the seam a real source reports its
+  own stall through.
 
 ## What KORE becomes
 

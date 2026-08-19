@@ -33,7 +33,7 @@ No Android SDK, Developer Mode, or network connection required — the project
 has zero plugins and bundles its fonts.
 
 ```bash
-flutter test                   # 135 tests, including the DSP assertions
+flutter test                   # 185 tests, including the DSP assertions
 dart run tool/cli_probe.dart   # sweep load levels and print the index curve
 ```
 
