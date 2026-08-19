@@ -1,131 +1,690 @@
 <!DOCTYPE html>
 <html lang="en">
   <head>
-    <meta charset="UTF-8" />
+    <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>KORE - The Digital Dashboard for Your Mind</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <title>KORE — a focus tool that shows its work</title>
+    <meta
+      name="description"
+      content="KORE is a closed-loop focus system for students: it measures cognitive load from an EEG signal, guides a 60-second reset, and reports whether the load actually fell. Working desktop prototype — real signal processing, simulated electrode."
+    />
+    <meta name="theme-color" content="#0e0e0e" />
+    <meta name="color-scheme" content="dark" />
     <link
-      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap"
-      rel="stylesheet"
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230e0e0e'/%3E%3Cpath d='M6 20c3 0 3-8 6-8s3 12 6 12 3-16 5-16' fill='none' stroke='%23cf5f3c' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E"
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="KORE — a focus tool that shows its work" />
+    <meta
+      property="og:description"
+      content="Measure cognitive load, run a 60-second reset, and see whether it actually helped. Working prototype: real DSP, simulated electrode, no hardware yet."
     />
     <link rel="stylesheet" href="styles.css" />
   </head>
-  <body>
-    <div class="grain"></div>
-    <header class="hero">
-      <nav class="nav">
-        <div class="logo">KORE</div>
-        <div class="nav-links">
-          <a href="#how">How it works</a>
-          <a href="#metrics">Metrics</a>
-          <a href="#vision">Vision</a>
-        </div>
-      </nav>
 
-      <div class="hero-content">
-        <p class="eyebrow">Screenless Focus System</p>
-        <h1>The digital dashboard for your mind.</h1>
-        <p class="lead">
-          KORE helps students reset cognitive strain and sustain focus without
-          relying on nicotine or stimulants. A wearable ritual, a minimal app,
-          and a measurable return to clarity.
-        </p>
-        <div class="cta-row">
-          <button class="cta-primary">Join the pilot</button>
-          <button class="cta-secondary">Request a demo</button>
-        </div>
-        <div class="hero-card">
-          <div>
-            <p class="card-label">Cognitive Load Index</p>
-            <p class="card-value">72</p>
-            <p class="card-note">Reset recommended in 12 minutes</p>
-          </div>
-          <div class="card-divider"></div>
-          <div>
-            <p class="card-label">Reset Effectiveness</p>
-            <p class="card-value">+24%</p>
-            <p class="card-note">Clarity uplift after session</p>
-          </div>
-        </div>
+  <body>
+    <a class="skip-link" href="#main">Skip to main content</a>
+
+    <header class="site-header">
+      <div class="wrap">
+        <a class="wordmark" href="#top">
+          <svg
+            class="mark"
+            viewBox="0 0 32 32"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <path
+              d="M4 20c3 0 3-9 6-9s3 13 6 13 3-17 5-17"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+            <circle cx="27" cy="9" r="2.6" fill="#cf5f3c" />
+          </svg>
+          KORE
+        </a>
+        <nav class="nav" aria-label="Primary">
+          <a href="#loop">The loop</a>
+          <a href="#measurement">The measurement</a>
+          <a href="#honesty">Honesty rules</a>
+          <a href="#status">What's built</a>
+          <a href="#pilot">Pilot</a>
+        </nav>
       </div>
     </header>
 
-    <main>
-      <section id="how" class="section">
-        <div class="section-header">
-          <p class="eyebrow">How it works</p>
-          <h2>Closed-loop focus support, not passive content.</h2>
-        </div>
-        <div class="grid">
-          <div class="panel">
-            <h3>Detect strain</h3>
-            <p>
-              KORE learns your baseline and flags focus drift before it becomes
-              a crash.
+    <main id="main">
+      <!-- ================================================== HERO -->
+      <section class="hero" id="top">
+        <div class="wrap hero-grid">
+          <div>
+            <p class="eyebrow">Closed-loop focus system · working prototype</p>
+            <h1>
+              A focus tool that <span class="accent">shows its work.</span>
+            </h1>
+            <p class="lead">
+              KORE reads an EEG signal, turns it into one number for how hard
+              your head is working, guides a 60-second reset, and then tells you
+              what the number did — including when it went the wrong way.
             </p>
-          </div>
-          <div class="panel">
-            <h3>Run a reset</h3>
-            <p>
-              A short, low-friction protocol helps you return to clarity and
-              keep the session alive.
+            <p class="prose mt-md">
+              Built for students carrying a heavy term who would rather not run
+              it on caffeine and nicotine.
             </p>
+
+            <div class="actions">
+              <a class="btn btn--primary" href="#measurement">
+                See how the measurement works
+                <span class="arrow" aria-hidden="true">→</span>
+              </a>
+              <a
+                class="btn btn--ghost"
+                href="mailto:team@kore.health?subject=KORE%20pilot%20interest"
+              >
+                Ask about the pilot
+              </a>
+            </div>
+
+            <ul class="status-strip">
+              <li>Real DSP, simulated electrode</li>
+              <li>Runs offline — no accounts, no server</li>
+              <li class="is-pending">No hardware yet</li>
+            </ul>
           </div>
-          <div class="panel">
-            <h3>Confirm uplift</h3>
-            <p>
-              Quick check-ins measure the reset effect and reinforce the loop.
+
+          <!-- Readout panel: inline SVG, no image files, no scripts -->
+          <div class="readout">
+            <p class="readout-head">
+              <span>Prototype readout</span>
+              <span class="live">simulated source</span>
+            </p>
+
+            <svg
+              class="trace"
+              viewBox="0 0 600 90"
+              preserveAspectRatio="none"
+              role="img"
+              aria-labelledby="trace-title trace-desc"
+            >
+              <title id="trace-title">
+                A scrolling electroencephalogram-style waveform
+              </title>
+              <desc id="trace-desc">
+                An illustrative continuous waveform representing the 256 Hz
+                sample stream the prototype processes. It is decorative and
+                does not display live data.
+              </desc>
+              <g class="trace-scroll">
+                <path class="trace-line" d="M0 27.52 L3.158 29.75 L6.316 31.6 L9.474 32.7 L12.63 33.05 L15.79 32.03 L18.95 29.57 L22.11 27.68 L25.26 29.04 L28.42 33.75 L31.58 38.96 L34.74 42.09 L37.89 43.37 L41.05 44.34 L44.21 45.45 L47.37 46.22 L50.53 46.98 L53.68 48.8 L56.84 51.82 L60 55.29 L63.16 59.13 L66.32 64.25 L69.47 70.49 L72.63 75.99 L75.79 79.36 L78.95 81.47 L82.11 83.77 L85.26 85.5 L88.42 84.24 L91.58 79.11 L94.74 71.94 L97.89 64.99 L101.1 59.07 L104.2 54.06 L107.4 50.04 L110.5 46.57 L113.7 42.17 L116.8 36 L120 29.68 L123.2 25.97 L126.3 25.68 L129.5 27.23 L132.6 29.4 L135.8 32.81 L138.9 38 L142.1 43.44 L145.3 46.77 L148.4 47.36 L151.6 46.32 L154.7 44.52 L157.9 42.06 L161.1 39.46 L164.2 37.65 L167.4 36.37 L170.5 34.13 L173.7 30.59 L176.8 27.84 L180 28.07 L183.2 30.6 L186.3 32.64 L189.5 32.72 L192.6 31.74 L195.8 31.02 L198.9 30.73 L202.1 30.92 L205.3 32.37 L208.4 35.42 L211.6 38.85 L214.7 41.21 L217.9 42.64 L221.1 44 L224.2 44.82 L227.4 43.78 L230.5 41.31 L233.7 40.11 L236.8 42.14 L240 46.21 L243.2 49.61 L246.3 51.05 L249.5 50.97 L252.6 49.87 L255.8 47.85 L258.9 45.72 L262.1 44.63 L265.3 44.45 L268.4 43.72 L271.6 42.13 L274.7 41.71 L277.9 44.45 L281.1 49.76 L284.2 55.46 L287.4 60.67 L290.5 66.23 L293.7 72.25 L296.8 77.16 L300 79.61 L303.2 80 L306.3 79.4 L309.5 78.08 L312.6 76.06 L315.8 74.09 L318.9 72.44 L322.1 69.37 L325.3 62.58 L328.4 52.31 L331.6 41.83 L334.7 34.05 L337.9 29.1 L341.1 25.68 L344.2 23.5 L347.4 23.13 L350.5 24.21 L353.7 25.54 L356.8 26.75 L360 28.32 L363.2 29.94 L366.3 30.37 L369.5 29.34 L372.6 28.38 L375.8 28.55 L378.9 28.73 L382.1 27.31 L385.3 25 L388.4 24.25 L391.6 26.08 L394.7 28.9 L397.9 30.74 L401.1 31.15 L404.2 30.64 L407.4 29.51 L410.5 28.56 L413.7 29.56 L416.8 33.61 L420 39.23 L423.2 43.71 L426.3 46.18 L429.5 48.07 L432.6 50.36 L435.8 52.13 L438.9 52.47 L442.1 52.53 L445.3 54.28 L448.4 58 L451.6 62.29 L454.7 66.04 L457.9 69.01 L461.1 70.66 L464.2 70.13 L467.4 67.82 L470.5 65.48 L473.7 63.79 L476.8 60.99 L480 55.29 L483.2 47.77 L486.3 41.53 L489.5 38.36 L492.6 37.56 L495.8 37.95 L498.9 39.37 L502.1 41.69 L505.3 43.97 L508.4 45.59 L511.6 47.46 L514.7 50.65 L517.9 54.65 L521.1 58.21 L524.2 61.46 L527.4 65.44 L530.5 69.51 L533.7 70.86 L536.8 67.53 L540 60.78 L543.2 53.52 L546.3 47.31 L549.5 42.04 L552.6 37.58 L555.8 34.2 L558.9 31.51 L562.1 28.65 L565.3 26.05 L568.4 25.36 L571.6 26.98 L574.7 28.89 L577.9 28.98 L581.1 27.66 L584.2 26.83 L587.4 27.02 L590.5 27.02 L593.7 26.33 L596.8 26.16 L600 27.52 L603.2 29.75 L606.3 31.6 L609.5 32.7 L612.6 33.05 L615.8 32.03 L618.9 29.57 L622.1 27.68 L625.3 29.04 L628.4 33.75 L631.6 38.96 L634.7 42.09 L637.9 43.37 L641.1 44.34 L644.2 45.45 L647.4 46.22 L650.5 46.98 L653.7 48.8 L656.8 51.82 L660 55.29 L663.2 59.13 L666.3 64.25 L669.5 70.49 L672.6 75.99 L675.8 79.36 L678.9 81.47 L682.1 83.77 L685.3 85.5 L688.4 84.24 L691.6 79.11 L694.7 71.94 L697.9 64.99 L701.1 59.07 L704.2 54.06 L707.4 50.04 L710.5 46.57 L713.7 42.17 L716.8 36 L720 29.68 L723.2 25.97 L726.3 25.68 L729.5 27.23 L732.6 29.4 L735.8 32.81 L738.9 38 L742.1 43.44 L745.3 46.77 L748.4 47.36 L751.6 46.32 L754.7 44.52 L757.9 42.06 L761.1 39.46 L764.2 37.65 L767.4 36.37 L770.5 34.13 L773.7 30.59 L776.8 27.84 L780 28.07 L783.2 30.6 L786.3 32.64 L789.5 32.72 L792.6 31.74 L795.8 31.02 L798.9 30.73 L802.1 30.92 L805.3 32.37 L808.4 35.42 L811.6 38.85 L814.7 41.21 L817.9 42.64 L821.1 44 L824.2 44.82 L827.4 43.78 L830.5 41.31 L833.7 40.11 L836.8 42.14 L840 46.21 L843.2 49.61 L846.3 51.05 L849.5 50.97 L852.6 49.87 L855.8 47.85 L858.9 45.72 L862.1 44.63 L865.3 44.45 L868.4 43.72 L871.6 42.13 L874.7 41.71 L877.9 44.45 L881.1 49.76 L884.2 55.46 L887.4 60.67 L890.5 66.23 L893.7 72.25 L896.8 77.16 L900 79.61 L903.2 80 L906.3 79.4 L909.5 78.08 L912.6 76.06 L915.8 74.09 L918.9 72.44 L922.1 69.37 L925.3 62.58 L928.4 52.31 L931.6 41.83 L934.7 34.05 L937.9 29.1 L941.1 25.68 L944.2 23.5 L947.4 23.13 L950.5 24.21 L953.7 25.54 L956.8 26.75 L960 28.32 L963.2 29.94 L966.3 30.37 L969.5 29.34 L972.6 28.38 L975.8 28.55 L978.9 28.73 L982.1 27.31 L985.3 25 L988.4 24.25 L991.6 26.08 L994.7 28.9 L997.9 30.74 L1001 31.15 L1004 30.64 L1007 29.51 L1011 28.56 L1014 29.56 L1017 33.61 L1020 39.23 L1023 43.71 L1026 46.18 L1029 48.07 L1033 50.36 L1036 52.13 L1039 52.47 L1042 52.53 L1045 54.28 L1048 58 L1052 62.29 L1055 66.04 L1058 69.01 L1061 70.66 L1064 70.13 L1067 67.82 L1071 65.48 L1074 63.79 L1077 60.99 L1080 55.29 L1083 47.77 L1086 41.53 L1089 38.36 L1093 37.56 L1096 37.95 L1099 39.37 L1102 41.69 L1105 43.97 L1108 45.59 L1112 47.46 L1115 50.65 L1118 54.65 L1121 58.21 L1124 61.46 L1127 65.44 L1131 69.51 L1134 70.86 L1137 67.53 L1140 60.78 L1143 53.52 L1146 47.31 L1149 42.04 L1153 37.58 L1156 34.2 L1159 31.51 L1162 28.65 L1165 26.05 L1168 25.36 L1172 26.98 L1175 28.89 L1178 28.98 L1181 27.66 L1184 26.83 L1187 27.02 L1191 27.02 L1194 26.33 L1197 26.16 L1200 27.52" />
+              </g>
+            </svg>
+
+            <div class="readout-body">
+              <div>
+                <p class="index-label">Cognitive load</p>
+                <p class="index-value num">72</p>
+              </div>
+              <div class="bands">
+                <p class="band">
+                  <span>Theta</span>
+                  <span class="band-track"
+                    ><span
+                      class="band-fill band-fill--theta"
+                      style="width: 74%"
+                    ></span
+                  ></span>
+                </p>
+                <p class="band">
+                  <span>Alpha</span>
+                  <span class="band-track"
+                    ><span class="band-fill" style="width: 38%"></span
+                  ></span>
+                </p>
+              </div>
+            </div>
+
+            <p class="readout-foot">
+              Illustration of the prototype's on-screen readout. The index shown
+              is the value the pipeline produces at a simulated load of 0.75.
             </p>
           </div>
         </div>
       </section>
 
-      <section id="metrics" class="section alt">
-        <div class="section-header">
-          <p class="eyebrow">Metrics</p>
-          <h2>Track what matters for students.</h2>
+      <!-- ================================================== PROBLEM -->
+      <section class="section" id="problem">
+        <div class="wrap">
+          <div class="section-head">
+            <p class="eyebrow">The problem</p>
+            <h2>Strain is the thing students are actually managing.</h2>
+            <p class="prose">
+              Not motivation, not time — strain. It accumulates quietly across a
+              term, and the two things most students reach for to push through
+              it, caffeine and nicotine, are chosen because they are fast and
+              available, not because they work well.
+            </p>
+          </div>
+
+          <ul class="cards">
+            <li class="card">
+              <h3>You can't see it coming</h3>
+              <p>
+                By the time a study block has gone bad, it has usually been
+                going bad for a while. There is no dashboard for the thing that
+                is degrading.
+              </p>
+            </li>
+            <li class="card">
+              <h3>The alternatives ask too much</h3>
+              <p>
+                Meditation apps demand effort and attention from someone who has
+                run out of both. That is the wrong moment to ask for
+                twenty minutes of practice.
+              </p>
+            </li>
+            <li class="card">
+              <h3>Nothing proves it worked</h3>
+              <p>
+                A timer that plays audio at you cannot tell you whether anything
+                changed. Without a measurement, every reset is a guess you have
+                to take on faith.
+              </p>
+            </li>
+          </ul>
         </div>
-        <div class="metrics">
-          <div class="metric">
-            <span>Focus Streak</span>
-            <strong>56 min</strong>
+      </section>
+
+      <!-- ================================================== THE LOOP -->
+      <section class="section" id="loop">
+        <div class="wrap">
+          <div class="section-head">
+            <p class="eyebrow">The loop</p>
+            <h2>Detect. Reset. Confirm. Reinforce.</h2>
+            <p class="prose">
+              The product is the loop, not the sensor. Every step below is
+              running in the desktop prototype today — against a simulated
+              signal source, which is the part that is not real yet.
+            </p>
           </div>
-          <div class="metric">
-            <span>Reset Effectiveness</span>
-            <strong>+18%</strong>
+
+          <ol class="cards">
+            <li class="card">
+              <p class="step-no">01 / DETECT</p>
+              <h3>A personal baseline, then a number</h3>
+              <p>
+                The first 15 seconds capture your own resting ratio. After that
+                the Cognitive Load Index updates four times a second, scored
+                against that baseline rather than against a population average.
+              </p>
+              <p class="card-note">
+                Latched at <b>70</b> held five seconds, released at
+                <b>60</b> — so the state doesn't flicker at the boundary.
+              </p>
+            </li>
+            <li class="card">
+              <p class="step-no">02 / RESET</p>
+              <h3>Sixty seconds, guided</h3>
+              <p>
+                One protocol, box breathing, one minute long. Short enough that
+                a person mid-collapse will actually start it, and the meter
+                keeps running behind it the whole time.
+              </p>
+              <p class="card-note">
+                No content library, no streaming audio, nothing to choose from.
+              </p>
+            </li>
+            <li class="card">
+              <p class="step-no">03 / CONFIRM</p>
+              <h3>One question, paired with the data</h3>
+              <p>
+                Afterwards KORE asks how clear you feel, one to five. That
+                answer is stored next to the measured change in the index, so
+                what you felt and what was measured stay attached to each other.
+              </p>
+              <p class="card-note">
+                Both halves are kept, even when they <b>disagree</b>.
+              </p>
+            </li>
+            <li class="card">
+              <p class="step-no">04 / REINFORCE</p>
+              <h3>Trends you can argue with</h3>
+              <p>
+                Day streak, mean index drop, mean clarity. Enough to see whether
+                the habit is holding without turning your attention into another
+                thing to optimise.
+              </p>
+              <p class="card-note">
+                History is written to a file on <b>your machine</b>. There is no
+                server to send it to.
+              </p>
+            </li>
+          </ol>
+        </div>
+      </section>
+
+      <!-- ================================================== MEASUREMENT -->
+      <section class="section" id="measurement">
+        <div class="wrap">
+          <div class="section-head">
+            <p class="eyebrow">The measurement</p>
+            <h2>The signal processing is real. The electrode isn't — yet.</h2>
+            <p class="prose">
+              This is the part worth being specific about, because it is the
+              difference between a focus product and a meditation timer with a
+              gauge drawn on it. Here is the whole chain, from sample to number.
+            </p>
           </div>
-          <div class="metric">
-            <span>Weekly Focus Minutes</span>
-            <strong>11.3 hrs</strong>
+
+          <ol class="pipeline">
+            <li>
+              <span class="pipe-stage">Samples</span>
+              <span class="pipe-detail">256 Hz<br />microvolts</span>
+            </li>
+            <li>
+              <span class="pipe-stage">DC blocker</span>
+              <span class="pipe-detail">one-pole<br />0.5 Hz</span>
+            </li>
+            <li>
+              <span class="pipe-stage">Mains notch</span>
+              <span class="pipe-detail">RBJ biquad<br />60 Hz, Q = 20</span>
+            </li>
+            <li>
+              <span class="pipe-stage">Goertzel bank</span>
+              <span class="pipe-detail"
+                >512-sample Hann<br />hop 64 → 4 frames/s</span
+              >
+            </li>
+            <li>
+              <span class="pipe-stage">Band power</span>
+              <span class="pipe-detail"
+                >theta 4.0–7.5 Hz<br />alpha 8.0–12.0 Hz</span
+              >
+            </li>
+            <li>
+              <span class="pipe-stage">Load index</span>
+              <span class="pipe-detail">logistic<br />0–100</span>
+            </li>
+          </ol>
+
+          <dl class="formula">
+            <dt>Cognitive Load Index</dt>
+            <dd>r = ln( P<sub>θ</sub> / P<sub>α</sub> )</dd>
+            <dd>CLI = 100 / (1 + exp( −((r − μ) − C) / K ))</dd>
+            <dd class="k">K = 1.6&nbsp;&nbsp;C = 1.6&nbsp;&nbsp;μ = your baseline</dd>
+          </dl>
+
+          <div class="split">
+            <div>
+              <h3 class="sub-head">Why a ratio</h3>
+              <p class="prose">
+                Impedance, amplifier gain and windowing constants all cancel in
+                a theta-to-alpha ratio. That means the number tracks you rather
+                than the state of the contact — the single most fragile thing
+                about any wearable sensor.
+              </p>
+              <h3 class="sub-head">Why Goertzel, not FFT</h3>
+              <p class="prose">
+                Only 17 of 256 bins matter here. A Goertzel bin is
+                <em>exactly</em> the corresponding DFT bin, so we compute the
+                seventeen we need and skip the rest. The 512-sample periodic
+                Hann window at 256 Hz gives exactly 0.5 Hz bin spacing.
+              </p>
+              <h3 class="sub-head">Calibrated, not eyeballed</h3>
+              <p class="prose">
+                Power is normalised one-sided and window-corrected. A 50 µV
+                10 Hz tone reads alpha = 1250 µV², and a test in the repository
+                asserts that figure. Two engines compute it — a Dart reference
+                and a native C++ implementation over FFI — held to 1e-9 relative
+                agreement, with automatic fallback to Dart if the native library
+                fails to load.
+              </p>
+            </div>
+
+            <div>
+              <table class="data-table">
+                <caption>
+                  End-to-end response of the shipped pipeline, measured in the
+                  prototype. Input is the simulated source's load parameter;
+                  output is the index the chain above produces.
+                </caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Simulated load</th>
+                    <th scope="col">Index</th>
+                    <th scope="col" class="bar"><span class="visually-hidden">Relative</span></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <th scope="row" class="num">0.15</th>
+                    <td class="num">29</td>
+                    <td class="bar"><span style="width: 29%"></span></td>
+                  </tr>
+                  <tr>
+                    <th scope="row" class="num">0.50</th>
+                    <td class="num">55</td>
+                    <td class="bar"><span style="width: 55%"></span></td>
+                  </tr>
+                  <tr>
+                    <th scope="row" class="num">0.75</th>
+                    <td class="num">72</td>
+                    <td class="bar"><span style="width: 72%"></span></td>
+                  </tr>
+                  <tr>
+                    <th scope="row" class="num">0.90</th>
+                    <td class="num">81</td>
+                    <td class="bar"><span style="width: 81%"></span></td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <div class="caveat mt-lg">
+                <h3>What this does not show</h3>
+                <p>
+                  The electrode is simulated. These numbers describe the
+                  pipeline's behaviour, not a person's. They are evidence that
+                  the filters, the transform and the index are correct and
+                  monotonic — not evidence about anyone's attention.
+                </p>
+                <p>
+                  For the same reason, the drop you see during a reset in the
+                  prototype is arithmetic over a simulation. Real recovery
+                  physiology only becomes measurable when a real sensor is on
+                  the other end, and that is honest work still ahead of us.
+                </p>
+              </div>
+            </div>
           </div>
         </div>
       </section>
 
-      <section id="vision" class="section">
-        <div class="section-header">
-          <p class="eyebrow">Vision</p>
-          <h2>WHOOP-level clarity for cognitive strain.</h2>
+      <!-- ================================================== HONESTY RULES -->
+      <section class="section" id="honesty">
+        <div class="wrap">
+          <div class="section-head">
+            <p class="eyebrow">Honesty rules</p>
+            <h2>Three rules that make the number harder to fake.</h2>
+            <p class="prose">
+              It would be trivial to make KORE's statistics look good. These
+              three constraints are written into the prototype specifically to
+              stop that, and they cost us numbers on purpose.
+            </p>
+          </div>
+
+          <ol class="rules">
+            <li>
+              <div>
+                <strong>A reset only counts if you finished it</strong>
+                <p>
+                  The check-in is offered only when the protocol ran to the end.
+                  Abandon it halfway and nothing is recorded — a skipped reset
+                  is not a data point, and it will not pad a streak.
+                </p>
+              </div>
+            </li>
+            <li>
+              <div>
+                <strong>No baseline, no claim</strong>
+                <p>
+                  Resets that start before the 15-second calibration completes
+                  are not logged at all. Without your baseline the index has
+                  nothing to be relative to, so we would rather record nothing
+                  than record something meaningless.
+                </p>
+              </div>
+            </li>
+            <li>
+              <div>
+                <strong>The summary reports the number that happened</strong>
+                <p>
+                  The post-reset sheet states the measured change plainly,
+                  including the sessions where the index went <em>up</em>. A
+                  system that only ever shows you improvement is not measuring
+                  anything.
+                </p>
+              </div>
+            </li>
+          </ol>
         </div>
-        <div class="vision">
-          <p>
-            KORE is built for students who want a screenless, measurable way to
-            stay sharp. The wearable is designed to be invisible in daily life,
-            while the app stays minimal and data-driven.
-          </p>
-          <div class="pill-row">
-            <span class="pill">Screenless ritual</span>
-            <span class="pill">Personalized baseline</span>
-            <span class="pill">Low cognitive load UI</span>
-            <span class="pill">Measurable reset</span>
+      </section>
+
+      <!-- ================================================== STATUS -->
+      <section class="section" id="status">
+        <div class="wrap">
+          <div class="section-head">
+            <p class="eyebrow">Where the project actually is</p>
+            <h2>Built and not built, in plain language.</h2>
+            <p class="prose">
+              KORE is an early prototype and we would rather you know exactly
+              which half you are looking at.
+            </p>
+          </div>
+
+          <div class="split">
+            <div class="ledger ledger--built">
+              <h3>Working today</h3>
+              <ul>
+                <li>
+                  <svg
+                    class="glyph"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 16 16"
+                    aria-hidden="true"
+                    focusable="false"
+                  >
+                    <path
+                      d="M2 8.5 6.2 12.5 14 3.5"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2.2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                  <span
+                    ><b>A desktop app that runs.</b> Flutter on Windows, zero
+                    plugins, bundled fonts.</span
+                  >
+                </li>
+                <li>
+                  <svg class="glyph" width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 8.5 6.2 12.5 14 3.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  <span
+                    ><b>The full signal chain.</b> Filters, Goertzel bank, band
+                    power and the index, in a Dart reference implementation and
+                    a native C++ one.</span
+                  >
+                </li>
+                <li>
+                  <svg class="glyph" width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 8.5 6.2 12.5 14 3.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  <span
+                    ><b>52 passing tests</b>, including the µV² calibration
+                    assertion and 1e-9 parity between the two engines.</span
+                  >
+                </li>
+                <li>
+                  <svg class="glyph" width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 8.5 6.2 12.5 14 3.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  <span
+                    ><b>The whole loop end to end.</b> Baseline, index, reset
+                    protocol, check-in, streaks and recovery trends.</span
+                  >
+                </li>
+                <li>
+                  <svg class="glyph" width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2 8.5 6.2 12.5 14 3.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  <span
+                    ><b>A hardware seam.</b> The sensor sits behind one
+                    interface, so a real source can drop in without touching the
+                    engine, the index or the interface.</span
+                  >
+                </li>
+              </ul>
+            </div>
+
+            <div class="ledger ledger--pending">
+              <h3>Not built yet</h3>
+              <ul>
+                <li>
+                  <svg
+                    class="glyph"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 16 16"
+                    aria-hidden="true"
+                    focusable="false"
+                  >
+                    <path
+                      d="M3.5 3.5 12.5 12.5M12.5 3.5 3.5 12.5"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2.2"
+                      stroke-linecap="round"
+                    />
+                  </svg>
+                  <span
+                    ><b>Hardware.</b> There is no patch, no headband and no
+                    Bluetooth link. Nothing speaks to a device, and nothing is
+                    for sale.</span
+                  >
+                </li>
+                <li>
+                  <svg class="glyph" width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3.5 3.5 12.5 12.5M12.5 3.5 3.5 12.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+                  <span
+                    ><b>Real physiological recovery data.</b> The uplift the
+                    prototype shows is computed over a simulated signal.</span
+                  >
+                </li>
+                <li>
+                  <svg class="glyph" width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3.5 3.5 12.5 12.5M12.5 3.5 3.5 12.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+                  <span
+                    ><b>A mobile app.</b> The Android target is a scaffold. The
+                    phone is the plan, not the present.</span
+                  >
+                </li>
+                <li>
+                  <svg class="glyph" width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3.5 3.5 12.5 12.5M12.5 3.5 3.5 12.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+                  <span
+                    ><b>Accounts, sync, cloud anything.</b> No server exists.
+                    Today that is a limitation; it is also why your data has
+                    nowhere to leak to.</span
+                  >
+                </li>
+                <li>
+                  <svg class="glyph" width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3.5 3.5 12.5 12.5M12.5 3.5 3.5 12.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+                  <span
+                    ><b>Prediction.</b> KORE measures the load you are under
+                    now. Forecasting a crash before it lands is the next problem,
+                    not a feature.</span
+                  >
+                </li>
+              </ul>
+            </div>
           </div>
         </div>
       </section>
+
+      <!-- ================================================== ROADMAP -->
+      <section class="section" id="roadmap">
+        <div class="wrap">
+          <div class="section-head">
+            <p class="eyebrow">Direction · designed, not shipped</p>
+            <h2>Where this is going.</h2>
+            <p class="prose">
+              Stated as intent, because none of it exists. Read it as the plan
+              we are working against, not as a product description.
+            </p>
+          </div>
+
+          <ol class="roadmap">
+            <li>
+              <strong>A wearable EEG patch</strong>
+              <p>
+                Edge sensing, streaming over Bluetooth into the sensor interface
+                the prototype already defines. This is the piece that turns
+                every number on this page from a pipeline property into a
+                personal one.
+              </p>
+            </li>
+            <li>
+              <strong>The phone as the main surface</strong>
+              <p>
+                Desktop stays as the development and demo surface. The point of
+                a screenless ritual is that you are not sitting in front of a
+                dashboard for it.
+              </p>
+            </li>
+            <li>
+              <strong>Forecasting instead of only measuring</strong>
+              <p>
+                Moving from "your load is high right now" to a useful warning
+                earlier, with thresholds personalised across sessions rather
+                than re-learned every time you open the app.
+              </p>
+            </li>
+            <li>
+              <strong>Longitudinal history, if you want it</strong>
+              <p>
+                Cross-device history and longer-run trends. Local-only remains
+                the default; anything that leaves your machine should be a
+                decision you made.
+              </p>
+            </li>
+          </ol>
+        </div>
+      </section>
+
+      <!-- ================================================== PILOT -->
+      <section class="section" id="pilot">
+        <div class="wrap">
+          <div class="closing">
+            <p class="eyebrow">Pilot</p>
+            <h2>We're looking for a first cohort, not customers.</h2>
+            <p class="prose">
+              The goal for the first round is a small group of students using
+              the prototype daily for two to three weeks, so we can find out
+              whether the loop is worth returning to before we build anything
+              you would wear. If that sounds like something you would take part
+              in — or you work with students and want to help run it — we would
+              like to hear from you.
+            </p>
+            <p class="prose">
+              To say the obvious: there is nothing to buy, no waiting list for a
+              device, and no device.
+            </p>
+            <div class="actions">
+              <a
+                class="btn btn--primary"
+                href="mailto:team@kore.health?subject=KORE%20pilot%20interest"
+              >
+                Email us about the pilot
+                <span class="arrow" aria-hidden="true">→</span>
+              </a>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================================================== DISCLAIMER -->
+      <aside class="wrap" aria-label="Important disclaimer">
+        <p class="disclaimer">
+          <strong>KORE is a wellness and performance tool.</strong> It is not a
+          medical device, it does not diagnose, treat, cure or prevent any
+          condition, and it is not a substitute for care from a qualified health
+          professional. Nothing on this page is medical advice. If you are
+          struggling with your health, please talk to a doctor rather than a
+          gauge.
+        </p>
+      </aside>
     </main>
 
-    <footer class="footer">
-      <p>Interested in the pilot? Email team@kore.health</p>
+    <footer class="site-footer">
+      <div class="wrap">
+        <p>KORE — early prototype. Nothing on this page is for sale.</p>
+        <p><a href="mailto:team@kore.health">team@kore.health</a></p>
+      </div>
     </footer>
   </body>
 </html>
