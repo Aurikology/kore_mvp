@@ -6,11 +6,13 @@ import '../session/kore_session.dart';
 import '../theme/kore_theme.dart';
 import '../widgets/check_in_sheet.dart';
 import '../widgets/forecast_notice.dart';
+import '../services/signal_quality.dart';
 import '../widgets/load_meter.dart';
 import '../widgets/load_sparkline.dart';
 import '../widgets/load_trend_card.dart';
 import '../widgets/recovery_card.dart';
 import '../widgets/reset_protocol_sheet.dart';
+import '../widgets/signal_notice.dart';
 import 'trend_screen.dart';
 
 /// The live dashboard.
@@ -22,7 +24,16 @@ import 'trend_screen.dart';
 class HomePage extends StatefulWidget {
   final HistoryStore? store;
 
-  const HomePage({super.key, this.store});
+  /// Test seam, for the same reason [store] is one. The simulated source reads
+  /// a real `Stopwatch`, so under `flutter test` fake time produces no samples
+  /// and the dashboard never gets past calibrating - which means everything
+  /// downstream of a live reading, quality included, is untestable from here
+  /// unless the session can be built outside with an injected clock.
+  ///
+  /// A session passed in is the caller's to dispose; one built here is not.
+  final KoreSession? session;
+
+  const HomePage({super.key, this.store, this.session});
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -30,17 +41,19 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   late final KoreSession _session;
+  late final bool _ownsSession;
 
   @override
   void initState() {
     super.initState();
-    _session = KoreSession(store: widget.store);
+    _ownsSession = widget.session == null;
+    _session = widget.session ?? KoreSession(store: widget.store);
     _session.start();
   }
 
   @override
   void dispose() {
-    _session.dispose();
+    if (_ownsSession) _session.dispose();
     super.dispose();
   }
 
@@ -178,9 +191,7 @@ class _HomePageState extends State<HomePage> {
                     flex: 5,
                     child: Column(
                       children: [
-                        _gauge(context, KoreWindow.expanded),
-                        const SizedBox(height: KoreSpace.sm),
-                        _stateChip(context),
+                        ..._reading(context, KoreWindow.expanded),
                         const SizedBox(height: KoreSpace.xl),
                         _resetCta(context),
                       ],
@@ -209,10 +220,34 @@ class _HomePageState extends State<HomePage> {
   List<Widget> _headline(BuildContext context, KoreWindow window) => [
         _header(context, window),
         const SizedBox(height: KoreSpace.md),
+        ..._reading(context, window),
+      ];
+
+  /// The reading and everything qualifying it. Shared rather than repeated:
+  /// the expanded layout builds its own column instead of using [_headline],
+  /// so anything added to one and not the other goes missing on exactly one
+  /// window class - which is the least likely place anyone looks.
+  List<Widget> _reading(BuildContext context, KoreWindow window) => [
         _gauge(context, window),
         const SizedBox(height: KoreSpace.sm),
         _stateChip(context),
+        // Directly under the chip, because the chip is the claim and this is
+        // the reason to doubt it. Renders nothing when the signal is fine.
+        if (_signalWorthMentioning) ...[
+          const SizedBox(height: KoreSpace.sm),
+          SignalNotice(
+            level: _session.signalQualityLevel,
+            faults: _session.signalFaults,
+            calibrationStalled: _session.calibrationStalled,
+          ),
+        ],
       ];
+
+  /// Kept as one question so the three layouts cannot disagree about when the
+  /// notice appears.
+  bool get _signalWorthMentioning =>
+      _session.signalQualityLevel != SignalQualityLevel.good ||
+      _session.calibrationStalled;
 
   /// Everything behind the reading. Same list on every layout; only where it
   /// sits changes.
@@ -271,6 +306,7 @@ class _HomePageState extends State<HomePage> {
         child: LoadMeter(
           value: _session.cognitiveLoad,
           calibrating: !_session.isCalibrated,
+          stale: _session.isCalibrated && !_session.isReadingTrustworthy,
           calibrationSecondsRemaining: _session.calibrationSecondsRemaining,
           strainThreshold: _session.strainEnter,
           size: KoreGauge.diameterFor(constraints.maxWidth, window),
@@ -341,11 +377,18 @@ class _HomePageState extends State<HomePage> {
     final k = context.kore;
     final text = Theme.of(context).textTheme;
 
-    final (label, color) = switch (_session.loadState) {
-      LoadState.calibrating => ('Establishing your baseline', k.unmeasured),
-      LoadState.steady => ('Steady', k.calm),
-      LoadState.strain => ('Strain detected', k.strain),
-    };
+    // Quality outranks the state. The gate withdraws strain when the signal
+    // goes, which leaves `steady` behind - and "Steady" for a user whose
+    // electrode just fell off is the single most misleading thing this screen
+    // could say, because it is indistinguishable from a real calm reading.
+    final (label, color) = _session.isCalibrated &&
+            !_session.isReadingTrustworthy
+        ? ('Not reading you right now', k.unmeasured)
+        : switch (_session.loadState) {
+            LoadState.calibrating => ('Establishing your baseline', k.unmeasured),
+            LoadState.steady => ('Steady', k.calm),
+            LoadState.strain => ('Strain detected', k.strain),
+          };
 
     return Center(
       child: Container(
@@ -444,7 +487,10 @@ class _HomePageState extends State<HomePage> {
         // Strain outranks the forecast: once the index has actually crossed,
         // "about 15 seconds out" is a statement about a future that already
         // arrived. Only one of the two ever shows.
-        if (!strain) ForecastNotice(forecast: _session.crashForecast),
+        // The predictor is fed nothing while the signal is untrusted, so its
+        // last forecast describes a trajectory that stopped being observed.
+        if (!strain && _session.isReadingTrustworthy)
+          ForecastNotice(forecast: _session.crashForecast),
         // Appears above the button, never in place of anything, so the button
         // itself does not move when the state changes.
         if (strain)
@@ -498,6 +544,26 @@ class _HomePageState extends State<HomePage> {
             OutlinedButton(
               onPressed: _session.recalibrate,
               child: const Text('Recalibrate'),
+            ),
+            // The faults matter more in a demo than the load levels do: this
+            // is the one part of KORE whose correct behaviour is *refusing*
+            // to show something, and that is impossible to believe from a
+            // description.
+            OutlinedButton(
+              onPressed: _session.simulatePoorContact,
+              child: const Text('Weak contact'),
+            ),
+            OutlinedButton(
+              onPressed: _session.simulateDetachedElectrode,
+              child: const Text('Detach electrode'),
+            ),
+            OutlinedButton(
+              onPressed: _session.simulateDropout,
+              child: const Text('Drop samples'),
+            ),
+            OutlinedButton(
+              onPressed: _session.simulateGoodContact,
+              child: const Text('Restore contact'),
             ),
           ],
         ),

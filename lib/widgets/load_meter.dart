@@ -21,6 +21,12 @@ class LoadMeter extends StatelessWidget {
 
   final bool calibrating;
 
+  /// The signal stopped being worth believing, so [value] is the last reading
+  /// taken from one that was. The number stays on screen - a gauge that blanks
+  /// is a gauge nobody can sanity-check - but it must not look current, or the
+  /// hold becomes the lie the quality path exists to prevent.
+  final bool stale;
+
   /// Seconds left in baseline capture, shown while [calibrating].
   final int calibrationSecondsRemaining;
 
@@ -34,6 +40,7 @@ class LoadMeter extends StatelessWidget {
     super.key,
     required this.value,
     this.calibrating = false,
+    this.stale = false,
     this.calibrationSecondsRemaining = 0,
     this.strainThreshold = 70,
     this.size = 240,
@@ -45,15 +52,20 @@ class LoadMeter extends StatelessWidget {
     final text = Theme.of(context).textTheme;
     // Routed through forLoad so an uncalibrated gauge can never paint itself
     // calm: with no baseline there is no reading to colour.
-    final color = k.forLoad(value, measured: !calibrating);
+    final color = k.forLoad(value, measured: !calibrating && !stale);
     final numeral = KoreGauge.numeralSize(size);
 
     return Semantics(
       container: true,
-      label: calibrating
-          ? 'Establishing your baseline, '
-              '$calibrationSecondsRemaining seconds remaining'
-          : 'Cognitive load ${value.round()} out of 100',
+      label: switch ((calibrating, stale)) {
+        (true, _) => 'Establishing your baseline, '
+            '$calibrationSecondsRemaining seconds remaining',
+        // Screen readers get the caveat first: by the time the number is read
+        // out, the listener has already been told not to trust it.
+        (false, true) =>
+          'Signal lost. Last reading ${value.round()} out of 100',
+        (false, false) => 'Cognitive load ${value.round()} out of 100',
+      },
       excludeSemantics: true,
       child: SizedBox(
         width: size,
@@ -99,9 +111,10 @@ class LoadMeter extends StatelessWidget {
                       ),
                       SizedBox(height: KoreGauge.captionGap(size)),
                       Text(
-                        'COGNITIVE LOAD',
-                        style: text.labelMedium
-                            ?.copyWith(letterSpacing: KoreType.trackedLabel),
+                        stale ? 'LAST READING' : 'COGNITIVE LOAD',
+                        style: text.labelMedium?.copyWith(
+                            letterSpacing: KoreType.trackedLabel,
+                            color: stale ? k.unmeasured : null),
                       ),
                     ],
                   ],
