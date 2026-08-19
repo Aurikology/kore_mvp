@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../theme.dart';
+import '../theme/kore_theme.dart';
 
 /// Step 3 of the core loop in `docs/positioning.md`: confirm the uplift.
 ///
@@ -25,42 +25,50 @@ class CheckInSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
+    final k = context.kore;
 
     return SafeArea(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(28, 24, 28, 28),
+        padding: const EdgeInsets.fromLTRB(
+            KoreSpace.lg, KoreSpace.xl, KoreSpace.lg, KoreSpace.xl),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text('RESET COMPLETE',
                 textAlign: TextAlign.center,
-                style: text.labelMedium?.copyWith(letterSpacing: 2.0)),
-            const SizedBox(height: 14),
+                style: text.labelMedium
+                    ?.copyWith(letterSpacing: KoreType.trackedEyebrow)),
+            const SizedBox(height: KoreSpace.sm),
             Text(
               'How clear do you feel?',
               textAlign: TextAlign.center,
               style: text.headlineSmall,
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: KoreSpace.xs),
+            // Always secondary, never coloured by the result. A reset that
+            // moved the index the wrong way is information, not a failure to
+            // flag at someone who has just spent a minute breathing.
             Text(
               _measured(),
               textAlign: TextAlign.center,
-              style: text.bodyMedium?.copyWith(color: KoreTheme.textSecondary),
+              style: text.bodyMedium?.copyWith(color: k.textSecondary),
             ),
-            const SizedBox(height: 22),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                for (var i = 1; i <= 5; i++) _option(context, i),
-              ],
+            const SizedBox(height: KoreSpace.xl),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final d = KoreCheckIn.optionDiameter(constraints.maxWidth);
+                return Row(
+                  children: [
+                    for (var i = 1; i <= 5; i++) _option(context, i, d),
+                  ],
+                );
+              },
             ),
-            const SizedBox(height: 18),
+            const SizedBox(height: KoreSpace.md),
             TextButton(
               onPressed: () => Navigator.of(context).pop(),
-              child: Text('Skip',
-                  style: text.bodyMedium
-                      ?.copyWith(color: KoreTheme.textSecondary)),
+              child: const Text('Skip'),
             ),
           ],
         ),
@@ -76,31 +84,44 @@ class CheckInSheet extends StatelessWidget {
     return 'Your load held steady';
   }
 
-  Widget _option(BuildContext context, int value) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        SizedBox(
-          width: 52,
-          height: 52,
-          child: OutlinedButton(
-            style: OutlinedButton.styleFrom(
-              padding: EdgeInsets.zero,
-              shape: const CircleBorder(),
+  Widget _option(BuildContext context, int value, double diameter) {
+    final k = context.kore;
+
+    return Expanded(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: diameter,
+            height: diameter,
+            child: OutlinedButton(
+              style: OutlinedButton.styleFrom(
+                padding: EdgeInsets.zero,
+                minimumSize: Size.square(diameter),
+                shape: const CircleBorder(),
+              ),
+              onPressed: () => Navigator.of(context).pop(value),
+              child: Text(
+                '$value',
+                style: KoreType.numerals(
+                    fontSize: KoreType.size18, color: k.accent),
+              ),
             ),
-            onPressed: () => Navigator.of(context).pop(value),
-            child: Text('$value', style: KoreTheme.numerals(fontSize: 18)),
           ),
-        ),
-        const SizedBox(height: 6),
-        Text(
-          _labels[value - 1],
-          style: Theme.of(context)
-              .textTheme
-              .labelSmall
-              ?.copyWith(color: KoreTheme.textSecondary),
-        ),
-      ],
+          const SizedBox(height: KoreSpace.xxs),
+          Text(
+            _labels[value - 1],
+            textAlign: TextAlign.center,
+            maxLines: 1,
+            overflow: TextOverflow.fade,
+            softWrap: false,
+            style: Theme.of(context)
+                .textTheme
+                .labelSmall
+                ?.copyWith(color: k.textSecondary),
+          ),
+        ],
+      ),
     );
   }
 }

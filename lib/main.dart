@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'app/home_page.dart';
 import 'services/history_store.dart';
-import 'theme.dart';
+import 'theme/kore_theme.dart';
 
 void main() {
   // No async font fetch, no plugin initialization: fonts are bundled assets,
@@ -23,7 +23,12 @@ class KoreApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'KORE',
-      theme: KoreTheme.darkTheme(),
+      theme: KoreTheme.light(),
+      darkTheme: KoreTheme.dark(),
+      // Follows the system rather than forcing dark. KORE is opened at 2am in
+      // a dark room and at noon on a bright campus, and the phone already
+      // knows which of those it is.
+      themeMode: ThemeMode.system,
       home: HomePage(store: store),
       debugShowCheckedModeBanner: false,
     );

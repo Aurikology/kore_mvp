@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kore/session/kore_session.dart';
-import 'package:kore/theme.dart';
+import 'package:kore/theme/kore_theme.dart';
 import 'package:kore/widgets/reset_protocol_sheet.dart';
 
 /// Regression test for a bug that only showed up in the running app.
@@ -24,7 +24,7 @@ void main() {
 
     await tester.pumpWidget(MaterialApp(
       navigatorKey: navKey,
-      theme: KoreTheme.darkTheme(),
+      theme: KoreTheme.dark(),
       home: const Scaffold(body: Center(child: Text('dashboard'))),
     ));
 

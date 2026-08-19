@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../session/reset_record.dart';
-import '../theme.dart';
+import '../theme/kore_theme.dart';
 
 /// Step 4 of the core loop: reinforce with streaks and recovery trends.
 ///
@@ -26,59 +26,70 @@ class RecoveryCard extends StatelessWidget {
     final drop = history.averageDrop;
     final clarity = history.averageClarity;
 
-    // Owns the gap below it so that rendering nothing leaves no gap at all.
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: Card(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Text('RECOVERY',
-                      style: text.labelMedium?.copyWith(letterSpacing: 1.4)),
-                  const Spacer(),
-                  Text(
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(KoreSpace.lg),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text('RECOVERY',
+                    style: text.labelMedium
+                        ?.copyWith(letterSpacing: KoreType.trackedLabel)),
+                const Spacer(),
+                Flexible(
+                  child: Text(
                     '${history.completedInLastDays(today, 7)} in the last 7 days',
                     style: text.labelSmall,
+                    textAlign: TextAlign.end,
                   ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              Row(
-                children: [
-                  _stat(text, streak > 0 ? '$streak' : '--', 'day streak'),
-                  _stat(
-                    text,
-                    drop == null ? '--' : drop.round().toString(),
-                    'avg drop',
-                  ),
-                  _stat(
-                    text,
+                ),
+              ],
+            ),
+            const SizedBox(height: KoreSpace.md),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _stat(context, streak > 0 ? '$streak' : '--', 'day streak'),
+                _stat(context, drop == null ? '--' : drop.round().toString(),
+                    'avg drop'),
+                _stat(context,
                     clarity == null ? '--' : clarity.toStringAsFixed(1),
-                    'avg clarity',
-                  ),
-                ],
-              ),
-            ],
-          ),
+                    'avg clarity'),
+              ],
+            ),
+          ],
         ),
       ),
     );
   }
 
-  Widget _stat(TextTheme text, String value, String label) {
+  Widget _stat(BuildContext context, String value, String label) {
+    final k = context.kore;
+    // A dash is the absence of a measurement, not a good one. Giving it the
+    // calm colour would let an empty statistic read as a win.
+    final measured = value != '--';
+
     return Expanded(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(value,
-              style: KoreTheme.numerals(fontSize: 28, color: KoreTheme.sage)),
+          Text(
+            value,
+            style: KoreType.numerals(
+              fontSize: KoreType.size28,
+              color: measured ? k.calm : k.unmeasured,
+            ),
+          ),
           const SizedBox(height: 2),
-          Text(label,
-              style: text.labelSmall?.copyWith(color: KoreTheme.textSecondary)),
+          Text(
+            label,
+            style: Theme.of(context)
+                .textTheme
+                .labelSmall
+                ?.copyWith(color: k.textSecondary),
+          ),
         ],
       ),
     );
