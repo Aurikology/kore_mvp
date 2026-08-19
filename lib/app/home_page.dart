@@ -5,6 +5,7 @@ import '../services/history_store.dart';
 import '../session/kore_session.dart';
 import '../theme/kore_theme.dart';
 import '../widgets/check_in_sheet.dart';
+import '../widgets/forecast_notice.dart';
 import '../widgets/load_meter.dart';
 import '../widgets/load_sparkline.dart';
 import '../widgets/recovery_card.dart';
@@ -230,7 +231,7 @@ class _HomePageState extends State<HomePage> {
           value: _session.cognitiveLoad,
           calibrating: !_session.isCalibrated,
           calibrationSecondsRemaining: _session.calibrationSecondsRemaining,
-          strainThreshold: CognitiveLoadIndex.kStrainEnter,
+          strainThreshold: _session.strainEnter,
           size: KoreGauge.diameterFor(constraints.maxWidth, window),
         ),
       ),
@@ -351,9 +352,12 @@ class _HomePageState extends State<HomePage> {
                         ?.copyWith(letterSpacing: KoreType.trackedLabel)),
                 const Spacer(),
                 Flexible(
+                  // "your threshold" only once it actually is theirs. Calling
+                  // the default personal would claim the app had learned
+                  // something about them in the first minute.
                   child: Text(
-                    'strain threshold '
-                    '${CognitiveLoadIndex.kStrainEnter.round()}',
+                    '${_session.thresholdsPersonalised ? 'your' : 'strain'} '
+                    'threshold ${_session.strainEnter.round()}',
                     style: text.labelSmall,
                     textAlign: TextAlign.end,
                   ),
@@ -364,7 +368,7 @@ class _HomePageState extends State<HomePage> {
             LoadSparkline(
               values: _session.history,
               height: KoreSparkline.height(window),
-              thresholdLine: CognitiveLoadIndex.kStrainEnter,
+              thresholdLine: _session.strainEnter,
             ),
           ],
         ),
@@ -394,6 +398,10 @@ class _HomePageState extends State<HomePage> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
+        // Strain outranks the forecast: once the index has actually crossed,
+        // "about 15 seconds out" is a statement about a future that already
+        // arrived. Only one of the two ever shows.
+        if (!strain) ForecastNotice(forecast: _session.crashForecast),
         // Appears above the button, never in place of anything, so the button
         // itself does not move when the state changes.
         if (strain)

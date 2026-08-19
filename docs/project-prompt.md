@@ -26,7 +26,7 @@ this phase, not a treatment, not a generic meditation app.
 
 A **Flutter desktop app** running on Windows. Real DSP, simulated electrode —
 the signal processing is genuine; only the EEG source is synthetic. There is
-no server, no accounts, no network. 126 tests pass.
+no server, no accounts, no network. 135 tests pass.
 
 **Signal chain** (`lib/dsp/`), 256 Hz microvolt samples:
 - One-pole DC blocker at 0.5 Hz.
@@ -151,7 +151,7 @@ lib/theme/     design tokens: primitives, colours, metrics, components
 lib/widgets/   gauge, sparkline, reset protocol, check-in, recovery
 lib/app/       the dashboard shell and its three responsive layouts
 cpp/           native DSP (C++/FFI), built into the Windows bundle
-test/          126 tests
+test/          135 tests
 docs/          product narrative, positioning, design specs, hardware seam
 landing-page/  static marketing site (Netlify)
 tool/          cli_probe.dart, for tuning the index offline
@@ -167,9 +167,9 @@ Stack: Flutter/Dart, zero plugins, bundled fonts. Targets present: `windows/`
 - Any server, account system, sync, or cloud inference.
 - Real recovery physiology — `applyResetRecovery()` decays the synthetic load,
   so the measured uplift is arithmetic over a simulation.
-- **Nothing renders the forecast.** `crashForecast`, `crashWarning`,
-  `loadProfile` and `dailyLoad` are all exposed on `KoreSession`, but no widget
-  shows them yet.
+- **The daily trend is not rendered.** `dailyLoad` is on `KoreSession` and
+  nothing shows it, so the longitudinal record the store now keeps is only
+  visible in the file. The forecast and the personal threshold *are* on screen.
 - **Electrode contact quality**, which the source cannot report at all. This is
   the dangerous gap: a loose electrode produces theta-up/alpha-down — exactly
   the load signature — so the app cannot currently distinguish a calm reading

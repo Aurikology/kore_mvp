@@ -76,6 +76,18 @@ class KoreSession extends ChangeNotifier {
   /// a warning; every other status is a reason to stay quiet.
   bool get crashWarning => predictor.forecast.isWarning;
 
+  /// The threshold in force *now*, which is not the published constant once a
+  /// profile has personalised it. Anything that draws the threshold has to read
+  /// it from here: a gauge tick at 70 for a user whose threshold has moved to
+  /// 78 marks the wrong place on the dial and contradicts the state chip
+  /// beside it.
+  double get strainEnter => index.strainEnter;
+
+  /// Whether [strainEnter] is this user's own number or still the default, so
+  /// the UI can say which it is showing rather than implying the number was
+  /// earned.
+  bool get thresholdsPersonalised => index.isPersonalised;
+
   double get calibrationProgress => index.calibrationProgress;
 
   int get calibrationSecondsRemaining =>
