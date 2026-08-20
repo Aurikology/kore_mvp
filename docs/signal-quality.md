@@ -199,18 +199,33 @@ would agree with itself and with nothing else.
   indexing by channel position would make any pad that does not carry its own
   channel unrepresentable.
 
-  What is still missing is a **source that reports it**. `SimulatedEegSource`
-  is single-electrode end to end — one coupling scalar mixed into one output
-  sample — so nothing per-electrode is demonstrable or regression-testable
-  yet. Two known consequences to fix when it is wired:
+  `SimulatedEegSource` now reports it. The patch has two pads by default,
+  `left` and `right`, each with its own coupling, its own ramp and its own
+  impedance. `setPadContact`, `degradePad` and `detachPad` drive one pad;
+  `setContact`, `degradeContact`, `detachElectrode` and `restoreContact` still
+  drive the whole patch, so the scripted demo and every test written before
+  pads existed mean what they always meant.
 
-  - `_publishQuality` emits only when `level` or the fault *set* changes, so a
-    pad sliding 0.9 → 0.4 while another is already detached would emit
-    nothing, and a per-pad contact view would never repaint. The change
-    detector has to compare the per-electrode vector, not the derived scalar.
-  - `SignalQualityGate` snapshots `Set<SignalFault>` at contamination, which
-    erases *which* pad was bad across the settling window — exactly when the
-    user is holding one down waiting for the reading to come back.
+  The signal model was deliberately left alone. `ScenarioEEGGenerator` still
+  mixes one coupling into one output sample, driven by the worst measurable
+  pad. Per-pad detail is something the *device* reports, not something the
+  signal model has to represent — which is also what keeps the bit-for-bit
+  identity test intact, the one asserting that at `contact == 1.0` the
+  generator's output is unchanged sample for sample.
+
+  Fixed while wiring it: `_publishQuality` compared only `level` and the fault
+  *set*, so a pad sliding 0.9 → 0.4 while another was already detached moved
+  neither and emitted nothing. A per-pad view subscribed to `qualityUpdates`
+  would never have repainted, and the user would have re-seated one pad and
+  stopped. It now also compares each pad's *banded state* — banded rather than
+  raw, because comparing raw coupling would emit on every tick of a ramp and
+  turn a stream of transitions into a stream of samples.
+
+  Still open: `SignalQualityGate` snapshots `Set<SignalFault>` at
+  contamination, which erases *which* pad was bad across the settling window —
+  exactly when the user is holding one down waiting for the reading to come
+  back. The gate needed no changes to keep working, so this is a gap in what
+  it can *say*, not a break in what it does.
 
   Also unresolved, and not resolvable from the docs: **the montage**. Nothing
   written specifies electrode count, a reference, or which pads feed the

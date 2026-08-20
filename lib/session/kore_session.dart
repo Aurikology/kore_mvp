@@ -159,6 +159,30 @@ class KoreSession extends ChangeNotifier {
   /// rendered as good contact.
   double? get electrodeContact => signalQuality.contact;
 
+  /// Per-pad contact, when the source reports it. Empty when it does not -
+  /// which means the device did not break contact down, not that its pads are
+  /// fine. Anything naming a pad has to check this rather than index into it.
+  ///
+  /// This is what the pairing screen's contact check reads, and what lets the
+  /// dashboard say *which* pad to press instead of "contact is poor", which
+  /// is not an instruction anyone can follow.
+  List<ElectrodeContact> get electrodes => signalQuality.electrodes;
+
+  /// The pads the user could do something about, worst first. Pads that
+  /// cannot be measured are excluded: there is no instruction to give for a
+  /// pad whose state is unknown.
+  List<ElectrodeContact> get electrodesNeedingAttention =>
+      signalQuality.electrodesNeedingAttention;
+
+  /// Whether every measurable pad is seated well enough to calibrate against.
+  ///
+  /// The pairing screen's Continue button is gated on this. Note it is not
+  /// `isReadingTrustworthy`: publishing a reading and capturing the baseline
+  /// every later reading is measured against have different bars.
+  bool get allPadsSeated =>
+      signalQuality.hasPerElectrodeContact &&
+      signalQuality.electrodesNeedingAttention.isEmpty;
+
   /// The rate the device is actually sampling at, against the 256 Hz the DSP
   /// was built for.
   double get measuredSampleRateHz => signalQuality.measuredRateHz;
