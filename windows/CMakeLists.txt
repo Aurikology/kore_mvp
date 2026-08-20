@@ -52,6 +52,12 @@ add_subdirectory(${FLUTTER_MANAGED_DIR})
 # Application build; see runner/CMakeLists.txt.
 add_subdirectory("runner")
 
+# === KORE native DSP ===
+# Deliberately NOT routed through apply_standard_settings(): that helper sets
+# /W4 /WX and _HAS_EXCEPTIONS=0, and warnings-as-errors plus disabled STL
+# exceptions would break the try/catch in the FFI shim.
+add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../cpp" "${CMAKE_CURRENT_BINARY_DIR}/kore_cpp")
+
 
 # Generated plugin build rules, which manage building the plugins and adding
 # them to the application.
@@ -76,6 +82,9 @@ install(TARGETS ${BINARY_NAME} RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
   COMPONENT Runtime)
 
 install(FILES "${FLUTTER_ICU_DATA_FILE}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"
+  COMPONENT Runtime)
+
+install(TARGETS kore_signal RUNTIME DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
   COMPONENT Runtime)
 
 install(FILES "${FLUTTER_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"

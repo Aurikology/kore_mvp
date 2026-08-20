@@ -34,6 +34,11 @@ dev_dependencies:
 
   flutter_lints: ^5.0.0
 
+  # Drives KoreSession's timers under fake time so the full
+  # calibrate -> reset -> check-in path is testable in about a second rather
+  # than the 75 s it takes on a wall clock. Pure Dart, not a plugin.
+  fake_async: ^1.3.1
+
 flutter:
   uses-material-design: true
 

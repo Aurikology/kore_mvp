@@ -18,10 +18,10 @@ simulated.**
 | Live dashboard (gauge, trend, reset protocol) | Implemented |
 | Windows desktop build | Working |
 | Simulated EEG source | Implemented |
-| Native C++/FFI DSP path | Scaffolded, not built — falls back to Dart |
+| Native C++/FFI DSP path | Implemented and built on Windows; parity-tested against Dart |
 | BLE / real hardware | Not implemented (seam in place) |
 | Android build | Scaffold only; needs an Android SDK + NDK |
-| Post-reset check-in, streaks, persistence | Not implemented |
+| Post-reset check-in, streaks, persistence | Implemented, on-disk, no plugins |
 
 ## Running it
 
@@ -33,7 +33,7 @@ No Android SDK, Developer Mode, or network connection required — the project
 has zero plugins and bundles its fonts.
 
 ```bash
-flutter test                   # 15 tests, including the DSP assertions
+flutter test                   # 235 tests, including the DSP assertions
 dart run tool/cli_probe.dart   # sweep load levels and print the index curve
 ```
 
@@ -80,6 +80,30 @@ Measured end to end: load 0.15 → 29, 0.50 → 55, 0.75 → 72, 0.90 → 81.
 decays as it runs, so the index visibly falls on the meter behind it — the
 closed loop the product is built around.
 
+**5. Confirm and reinforce.** On completion the app asks a single question —
+*how clear do you feel?* — on a 1–5 scale, and pairs the answer with the
+measured index drop across the protocol. Each reset is appended to
+`%APPDATA%\KORE\history.json` (`~/.kore/history.json` elsewhere), and the
+dashboard shows the day streak, mean drop, and mean clarity.
+
+This closes steps 3 and 4 of the core loop in `docs/positioning.md` and is what
+makes three of its four key metrics measurable at all. Three deliberate
+choices:
+
+- The check-in is only offered when the protocol **ran to the end**. Asking
+  "did that help?" after a four-second abort collects noise and calls it a
+  metric. Abandoned resets are still logged — abandonment rate is a retention
+  signal — but they are excluded from the effectiveness average.
+- Resets taken **before calibration finishes** are not logged at all. Without a
+  personal baseline the index has nothing to be measured against, so a
+  before/after pair from that window would be a number with no meaning.
+- The sheet states the measurement plainly, including when the index went
+  **up**. A reset that did not work should say so.
+
+The uplift being measured is currently a simulated one — `applyResetRecovery()`
+decays the synthetic load. The arithmetic is real; the physiology behind it
+waits on hardware.
+
 ## Architecture notes
 
 - `DspEngine` has two implementations. `DartDspEngine` is the reference;
@@ -93,22 +117,44 @@ closed loop the product is built around.
 - Acquisition (256 Hz) is decoupled from repaint (4 Hz). Samples arrive in
   blocks; `KoreSession` notifies once per completed analysis frame.
 
-### Not yet wired up
+### The native path
 
-The native DSP path needs three Windows-specific fixes, all noted in the code:
-`cpp/CMakeLists.txt` uses GCC flags and links `c++` (neither works under MSVC),
-and `ffi_bindings.cc` has `extern "C"` but no `__declspec(dllexport)` — on
-Windows that controls name mangling, not export, so the DLL would build with an
-empty export table and fail at symbol lookup rather than at load.
+`cpp/` builds as `kore_signal.dll` alongside `kore.exe` as part of the normal
+`flutter build windows`, and `NativeDspEngine` loads it over FFI. Three
+Windows-specific things had to be right, and each is commented at the site:
+
+- `extern "C"` controls name mangling, not export. Without
+  `__declspec(dllexport)` the DLL builds with an empty export table,
+  `DynamicLibrary.open()` *succeeds*, and the failure only surfaces later at
+  `lookupFunction` — so a load-succeeded check proves nothing.
+- The old `cpp/CMakeLists.txt` set `-O3 -fPIC` globally and linked `c++`;
+  cl.exe rejects all three. Those flags now live behind `if(ANDROID)`, and the
+  optimisation level is left to CMake per configuration — hardcoding `/O2`
+  collides with Debug's `/RTC1`.
+- The target is deliberately not routed through Flutter's
+  `apply_standard_settings()`, which sets `/WX` and `_HAS_EXCEPTIONS=0`. The
+  FFI shim uses try/catch to stop exceptions unwinding across the C boundary.
+
+`test/dsp/native_parity_test.dart` holds the two engines to each other sample
+for sample: same frame count, and theta/alpha agreeing to 1e-9 relative. Both
+sides are double precision specifically so that tolerance is meaningful — a
+float32 core would drift through the Goertzel accumulation and make parity
+testing guesswork. The tests skip themselves with a build hint if the DLL is
+absent.
+
+The fallback still matters: `createDspEngine()` catches a missing library,
+unresolved symbols, and an ABI-version mismatch, so any of the three costs a
+log line rather than the app.
 
 ## Repo layout
 
 ```
 lib/dsp/       filters, Goertzel, band power, the index
 lib/sources/   EegSource seam + simulated generator
-lib/session/   pipeline wiring and demo controls
-lib/widgets/   gauge, sparkline, reset protocol
-cpp/           native DSP (not built yet)
+lib/session/   pipeline wiring, reset history, demo controls
+lib/services/  EEG stream types + on-disk history store
+lib/widgets/   gauge, sparkline, reset protocol, check-in, recovery
+cpp/           native DSP (C++/FFI), built into the Windows bundle
 docs/          product narrative and positioning
 landing-page/  static marketing site (Netlify)
 tool/          cli_probe.dart, for tuning the index offline

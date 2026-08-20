@@ -1,6 +1,8 @@
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'signal_quality.dart';
+
 /// Full-scale range of the (future) wearable's ADC, in microvolts.
 ///
 /// This was previously 5,000,000 uV - i.e. +/-5 V across an int16, or 2441 uV
@@ -84,6 +86,40 @@ class EEGSample {
     final channelStr = channels.map((v) => v.toStringAsFixed(2)).join(', ');
     return 'EEGSample(ts=$timestamp, channels=[$channelStr] uV)';
   }
+}
+
+/// One delivery from an `EegSource`: samples, where they sat in the device's
+/// own stream, and how much the source trusts them.
+///
+/// Quality rides on the block rather than arriving on a stream of its own
+/// because it has to be *attributable*. A separate stream races with the
+/// samples, and a race here means a report of good contact getting applied to
+/// the block that was taken while the electrode was already off - which is the
+/// exact failure the quality path exists to prevent.
+class SampleBlock {
+  final List<EEGSample> samples;
+
+  /// Device-side index of the first sample in this block, monotonic from the
+  /// start of the stream.
+  ///
+  /// This is what makes a gap countable rather than guessable.
+  /// [EEGSample.timestamp] is stamped when the *app* assembled the block, so
+  /// it says when the host saw the data and nothing at all about when the
+  /// device sampled it.
+  final int firstSampleIndex;
+
+  /// The source's report on itself as of this block.
+  final SignalQuality quality;
+
+  const SampleBlock({
+    required this.samples,
+    required this.firstSampleIndex,
+    required this.quality,
+  });
+
+  int get length => samples.length;
+
+  bool get isEmpty => samples.isEmpty;
 }
 
 /// Fixed 10 Hz synthetic EEG - constant amplitude, deterministic phase.

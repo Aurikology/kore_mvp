@@ -6,8 +6,15 @@ import 'package:flutter/foundation.dart';
 import '../dsp/cognitive_load_index.dart';
 import '../dsp/dsp_engine.dart';
 import '../dsp/dsp_engine_factory.dart';
+import '../dsp/focus_crash_predictor.dart';
+import '../dsp/load_profile.dart';
 import '../services/eeg_data_stream.dart';
+import '../services/history_store.dart';
+import '../services/signal_quality.dart';
 import '../sources/simulated_eeg_source.dart';
+import 'kore_history.dart';
+import 'reset_record.dart';
+import 'signal_quality_gate.dart';
 
 /// Owns the live pipeline: source -> DSP engine -> Cognitive Load Index.
 ///
@@ -22,16 +29,46 @@ class KoreSession extends ChangeNotifier {
   final SimulatedEegSource source;
   final DspEngine engine;
   final CognitiveLoadIndex index = CognitiveLoadIndex();
+  final FocusCrashPredictor predictor = FocusCrashPredictor();
+
+  /// Null means history lives in memory for this run only. The real store is
+  /// wired at the composition root (`main`), which keeps widget tests from
+  /// writing to the user's AppData just by pumping the app.
+  final HistoryStore? store;
+
+  /// Widens the source's per-block quality report to the analysis window the
+  /// index actually consumes. Everything that decides whether to believe a
+  /// reading asks this, and nothing asks the source directly.
+  final SignalQualityGate signalGate = SignalQualityGate();
 
   final ListQueue<double> _history = ListQueue<double>();
 
-  StreamSubscription<List<EEGSample>>? _subscription;
+  StreamSubscription<SampleBlock>? _subscription;
+  StreamSubscription<SignalQuality>? _qualitySubscription;
 
   bool _resetActive = false;
   int _resetSecondsRemaining = 0;
   Timer? _resetTimer;
 
-  KoreSession({SimulatedEegSource? source, DspEngine? engine})
+  ResetHistory _resetHistory = ResetHistory.empty;
+  DailyLoadLog _days = DailyLoadLog.empty;
+  _PendingReset? _pending;
+  DateTime? _startedAt;
+  double _loadBefore = 0;
+
+  /// Whether the signal stayed believable for the whole of the reset now
+  /// running. One unusable frame anywhere in the 60 s is enough to make the
+  /// before/after pair arithmetic over noise.
+  bool _resetSignalClean = true;
+
+  // Today's rollup, accumulated over calibrated frames and folded into [_days]
+  // whenever the session writes. Held separately rather than recomputed from
+  // [_history] because that queue is 120 s long and a day is not.
+  int _dayFrames = 0;
+  double _daySum = 0;
+  double _dayPeak = 0;
+
+  KoreSession({SimulatedEegSource? source, DspEngine? engine, this.store})
       : source = source ?? SimulatedEegSource(),
         engine = engine ?? createDspEngine();
 
@@ -43,10 +80,88 @@ class KoreSession extends ChangeNotifier {
 
   bool get isCalibrated => index.isCalibrated;
 
+  /// The near-future read on the same signal: is the index about to cross into
+  /// strain? Carries its own status and confidence, so the UI can distinguish
+  /// "nothing coming" from "cannot say yet".
+  CrashForecast get crashForecast => predictor.forecast;
+
+  /// The one bit the dashboard needs. A forecast is only actionable when it is
+  /// a warning; every other status is a reason to stay quiet.
+  bool get crashWarning => predictor.forecast.isWarning;
+
+  /// The threshold in force *now*, which is not the published constant once a
+  /// profile has personalised it. Anything that draws the threshold has to read
+  /// it from here: a gauge tick at 70 for a user whose threshold has moved to
+  /// 78 marks the wrong place on the dial and contradicts the state chip
+  /// beside it.
+  double get strainEnter => index.strainEnter;
+
+  /// Whether [strainEnter] is this user's own number or still the default, so
+  /// the UI can say which it is showing rather than implying the number was
+  /// earned.
+  bool get thresholdsPersonalised => index.isPersonalised;
+
   double get calibrationProgress => index.calibrationProgress;
 
   int get calibrationSecondsRemaining =>
       index.secondsRemainingInCalibration.ceil();
+
+  // --- Signal quality -----------------------------------------------------
+  //
+  // Load state answers "how loaded is this person". These answer "can we see
+  // them at all", and they are orthogonal: a detached electrode produces
+  // theta-up and alpha-down, which is the cognitive-load signature exactly, so
+  // a bad reading here is a *plausible* one rather than an obviously broken
+  // one. Anything rendering [cognitiveLoad], [loadState] or [crashForecast]
+  // has to consult [isReadingTrustworthy] first. See `docs/signal-quality.md`.
+
+  /// The source's live measurements: coupling, impedance, dropped samples,
+  /// measured rate. Re-read on every frame.
+  ///
+  /// Read this for the numbers. Read [signalQualityLevel] and [signalFaults]
+  /// for the verdict - they account for the 2 s analysis window, which the
+  /// source knows nothing about, and for a couple of seconds after a fault
+  /// clears they will deliberately disagree with `signalQuality.level`.
+  SignalQuality get signalQuality => signalGate.quality;
+
+  /// The one-word verdict - good, degraded, or unusable. This is the one to
+  /// render.
+  SignalQualityLevel get signalQualityLevel => signalGate.level;
+
+  /// Whether [cognitiveLoad], [loadState] and [crashForecast] describe the
+  /// user right now.
+  ///
+  /// False means the signal is not worth believing. [cognitiveLoad] then holds
+  /// the last value measured from a signal that was, so a gauge has something
+  /// to keep painting - but it is stale, and presenting it as current is the
+  /// failure this whole path exists to prevent.
+  bool get isReadingTrustworthy => signalGate.isUsable;
+
+  /// What is wrong, when something is, so the UI can say *which* problem the
+  /// user has: poor contact and a dropout have different fixes. Empty when
+  /// nothing is wrong.
+  Set<SignalFault> get signalFaults => signalGate.faults;
+
+  /// Usable, but on the way to not being. True when the reading still
+  /// publishes and the user should be told to fix something anyway.
+  bool get signalDegraded =>
+      signalQualityLevel == SignalQualityLevel.degraded;
+
+  /// True while the baseline capture is standing still because the signal is
+  /// not clean enough to define one from.
+  ///
+  /// Worth its own getter because the symptom without the explanation is a
+  /// countdown that has stopped counting, and users read that as a crash.
+  bool get calibrationStalled => !isCalibrated && !signalGate.isBaselineGrade;
+
+  /// Electrode-skin coupling, 0 to 1, or null when the source cannot measure
+  /// it. Null is not a fault - it means "not measured", and must never be
+  /// rendered as good contact.
+  double? get electrodeContact => signalQuality.contact;
+
+  /// The rate the device is actually sampling at, against the 256 Hz the DSP
+  /// was built for.
+  double get measuredSampleRateHz => signalQuality.measuredRateHz;
 
   /// Oldest-to-newest index history, for the sparkline.
   List<double> get history => List.unmodifiable(_history);
@@ -55,9 +170,32 @@ class KoreSession extends ChangeNotifier {
 
   int get resetSecondsRemaining => _resetSecondsRemaining;
 
-  double get resetProgress => _resetActive
-      ? 1 - (_resetSecondsRemaining / resetDuration.inSeconds)
-      : 0;
+  double get resetProgress =>
+      _resetActive ? 1 - (_resetSecondsRemaining / resetDuration.inSeconds) : 0;
+
+  ResetHistory get resetHistory => _resetHistory;
+
+  /// The longitudinal record, for anything that wants a trend rather than a
+  /// reading. Excludes whatever today's session has measured since the last
+  /// write; [flushState] brings it up to date.
+  DailyLoadLog get dailyLoad => _days;
+
+  /// The user's persistent baseline and thresholds, as this session has left
+  /// them.
+  LoadProfile get loadProfile => index.profile;
+
+  /// A finished reset is waiting to be written. The check-in is only offered
+  /// for a protocol that actually ran to the end - asking "did that help?"
+  /// after a four-second abort would collect noise and call it a metric.
+  bool get awaitingCheckIn => _pending?.completed ?? false;
+
+  bool get hasUncommittedReset => _pending != null;
+
+  /// Index points the pending reset moved, positive when the load fell.
+  double get pendingDrop {
+    final p = _pending;
+    return p == null ? 0 : p.loadBefore - p.loadAfter;
+  }
 
   String get backendLabel => engine.backendLabel;
 
@@ -71,29 +209,93 @@ class KoreSession extends ChangeNotifier {
   // --- Lifecycle ----------------------------------------------------------
 
   Future<void> start() async {
+    // Load first so the dashboard shows the real streak on the first frame
+    // rather than flashing a zero and correcting itself - and, since this
+    // completes before a single sample arrives, so the baseline capture that
+    // is about to start is checked against the profile it should be.
+    final loaded = await store?.loadDocument();
+    if (loaded != null) {
+      _resetHistory = loaded.resets;
+      _days = loaded.days;
+      index.adoptProfile(loaded.profile);
+      notifyListeners();
+    }
+
     _subscription = source.sampleBlocks.listen(_onBlock);
+    // Separately from the blocks, because the failure that matters most sends
+    // no blocks at all: a link that has dropped delivers nothing, and a
+    // consumer that only learned quality from arriving samples would hold a
+    // stale "good" for as long as the silence lasted.
+    _qualitySubscription = source.qualityUpdates.listen(_onQuality);
     await source.start();
   }
 
-  void _onBlock(List<EEGSample> block) {
+  void _onQuality(SignalQuality quality) {
+    signalGate.observeQuality(quality);
+    if (_resetActive && !signalGate.isUsable) _resetSignalClean = false;
+    notifyListeners();
+  }
+
+  void _onBlock(SampleBlock block) {
     if (block.isEmpty) return;
 
+    signalGate.observeBlock(block);
+
+    // The engine is fed whatever arrives, always. Its filters have to stay
+    // warm and its window has to keep flushing through a bad patch, otherwise
+    // recovery would cost a fresh settling transient on top of the fault.
+    // Refusing to *believe* the frames is a separate decision from refusing to
+    // compute them.
     engine.pushBlock([
-      for (final s in block)
+      for (final s in block.samples)
         if (s.channels.isNotEmpty) s.channels[0],
     ]);
 
     final frame = engine.takeFrame();
     if (frame == null) return; // no new analysis window yet
 
-    index.update(frame);
+    final quality = signalGate.quality;
+    final usable = quality.isUsable;
+    if (_resetActive && !usable) _resetSignalClean = false;
 
-    if (index.isCalibrated) {
+    final wasCalibrated = index.isCalibrated;
+
+    index.update(frame, quality: quality.level);
+    predictor.observe(
+      index: index.value,
+      deviation: index.deviation,
+      state: index.state,
+      // The user's own threshold, not the default: forecasting a crossing of
+      // a line the state machine is not using would warn about nothing.
+      enterThreshold: index.strainEnter,
+      signalUsable: usable,
+    );
+
+    if (index.isCalibrated && usable) {
+      // Nothing measured through an unusable signal enters the record. The
+      // sparkline simply stops advancing rather than drawing a held value: a
+      // flat run in a trend reads as a measurement of calm, and this is the
+      // opposite of one.
       _history.addLast(index.value);
       while (_history.length > historyLength) {
         _history.removeFirst();
       }
+
+      // [wasCalibrated], not [index.isCalibrated]: the frame that *completes*
+      // the capture has not produced an index yet, and folding its zero into
+      // the day's mean would be recording a reading that never happened.
+      if (wasCalibrated) {
+        _dayFrames++;
+        _daySum += index.value;
+        if (index.value > _dayPeak) _dayPeak = index.value;
+      }
     }
+
+    // Write the moment the baseline lands. Most sessions never take a reset,
+    // and those are exactly the sessions the profile has to learn from - if
+    // the only write were on commitReset, a user who never needs a reset would
+    // never accumulate a personal threshold.
+    if (!wasCalibrated && index.isCalibrated) unawaited(flushState());
 
     notifyListeners();
   }
@@ -107,12 +309,24 @@ class KoreSession extends ChangeNotifier {
 
     _resetActive = true;
     _resetSecondsRemaining = resetDuration.inSeconds;
+    // Only log resets taken against an established baseline, and only ones
+    // measured through a signal worth believing. Before calibration finishes
+    // the index has no personal reference to be measured against; through a
+    // bad electrode it has no measurement at all. Either way the before/after
+    // pair is a number without a meaning - and "reset effectiveness" is a
+    // headline metric, so the one thing it must never contain is arithmetic
+    // over an artifact.
+    _startedAt = index.isCalibrated && signalGate.isUsable
+        ? DateTime.now().toUtc()
+        : null;
+    _resetSignalClean = true;
+    _loadBefore = index.value;
     source.applyResetRecovery();
 
     _resetTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       _resetSecondsRemaining--;
       if (_resetSecondsRemaining <= 0) {
-        cancelReset();
+        _endReset(completed: true);
       } else {
         notifyListeners();
       }
@@ -121,12 +335,96 @@ class KoreSession extends ChangeNotifier {
     notifyListeners();
   }
 
-  void cancelReset() {
+  /// Ended by the user before the protocol finished.
+  void cancelReset() => _endReset(completed: false);
+
+  void _endReset({required bool completed}) {
     _resetTimer?.cancel();
     _resetTimer = null;
+    if (!_resetActive) return;
+
     _resetActive = false;
     _resetSecondsRemaining = 0;
+
+    final startedAt = _startedAt;
+    // A reset the signal went bad during is dropped entirely rather than
+    // recorded with a caveat, which is what already happens to a reset taken
+    // before calibration. Half a measurement in the effectiveness history is
+    // worse than a gap in it: the gap is visible.
+    if (startedAt != null && _resetSignalClean && signalGate.isUsable) {
+      // Capture the after-reading now, not when the user answers the check-in:
+      // they may sit on that screen, and the index keeps moving.
+      _pending = _PendingReset(
+        startedAt: startedAt,
+        completed: completed,
+        loadBefore: _loadBefore,
+        loadAfter: index.value,
+      );
+    }
+    _startedAt = null;
+
     notifyListeners();
+  }
+
+  /// Writes the finished reset, with [clarity] from the check-in when the user
+  /// answered one. Safe to call when nothing is pending.
+  Future<void> commitReset({int? clarity}) async {
+    final pending = _pending;
+    if (pending == null) return;
+    _pending = null;
+
+    final record = ResetRecord(
+      startedAt: pending.startedAt,
+      completed: pending.completed,
+      loadBefore: pending.loadBefore,
+      loadAfter: pending.loadAfter,
+      clarity: clarity,
+    );
+
+    final store = this.store;
+    _resetHistory = store == null
+        ? _resetHistory.add(record)
+        : await store.append(
+            _resetHistory,
+            record,
+            profile: index.profile,
+            days: _foldToday(),
+          );
+
+    notifyListeners();
+  }
+
+  /// Persist the personal profile and today's rollup without a reset attached.
+  /// Safe to call at any time, and a no-op with no store.
+  Future<void> flushState() async {
+    final store = this.store;
+    if (store == null) {
+      _foldToday();
+      return;
+    }
+    await store.saveState(profile: index.profile, days: _foldToday());
+  }
+
+  /// Fold what this session has measured so far into the daily log and clear
+  /// the accumulator, so repeated writes over one session do not count the
+  /// same frames twice. Frames are attributed to the day they are *written*,
+  /// which mis-files a session running across midnight - a day's resolution
+  /// does not justify carrying a per-frame timestamp to fix it.
+  DailyLoadLog _foldToday() {
+    if (_dayFrames == 0) return _days;
+
+    final now = DateTime.now();
+    _days = _days.record(DailyLoad(
+      day: DateTime(now.year, now.month, now.day),
+      frames: _dayFrames,
+      meanIndex: _daySum / _dayFrames,
+      peakIndex: _dayPeak,
+    ));
+
+    _dayFrames = 0;
+    _daySum = 0;
+    _dayPeak = 0;
+    return _days;
   }
 
   /// Demo control: drive the simulation directly rather than waiting on the
@@ -141,8 +439,38 @@ class KoreSession extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Demo control: fail the electrode instead of the user.
+  ///
+  /// These are the ones worth showing. A detached electrode raises theta and
+  /// suppresses alpha, so without the quality path the meter climbs into
+  /// strain and the app offers a breathing protocol to somebody whose headband
+  /// has come off. With it, the reading stops.
+  void simulatePoorContact() {
+    source.setContact(0.45);
+    notifyListeners();
+  }
+
+  void simulateDetachedElectrode() {
+    source.detachElectrode();
+    notifyListeners();
+  }
+
+  void simulateGoodContact() {
+    source.restoreContact();
+    notifyListeners();
+  }
+
+  /// One second of samples lost, the way a missed BLE notification loses them.
+  void simulateDropout({int samples = 256}) {
+    source.dropSamples(samples);
+    notifyListeners();
+  }
+
   void recalibrate() {
     index.recalibrate();
+    // The forecast is denominated in index points, and those are about to mean
+    // something else.
+    predictor.reset();
     _history.clear();
     notifyListeners();
   }
@@ -151,8 +479,25 @@ class KoreSession extends ChangeNotifier {
   void dispose() {
     _resetTimer?.cancel();
     _subscription?.cancel();
+    _qualitySubscription?.cancel();
     source.dispose();
     engine.dispose();
     super.dispose();
   }
+}
+
+/// A finished reset held between the protocol ending and the check-in being
+/// answered or dismissed.
+class _PendingReset {
+  final DateTime startedAt;
+  final bool completed;
+  final double loadBefore;
+  final double loadAfter;
+
+  const _PendingReset({
+    required this.startedAt,
+    required this.completed,
+    required this.loadBefore,
+    required this.loadAfter,
+  });
 }
