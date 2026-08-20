@@ -186,6 +186,36 @@ would agree with itself and with nothing else.
   quality stays at its last value. The `qualityUpdates` stream is the seam
   through which a real source reports its own stall; a timer that notices
   silence on the app side is the belt to that braces.
-- **Multi-channel quality.** `contact` is one number for one electrode. A patch
-  with four will want per-channel reports and a rule for combining them.
+- **Multi-channel quality — the type exists, no source fills it.**
+  `SignalQuality.electrodes` carries per-electrode contact, and
+  `SignalQuality.fromElectrodes` rolls it up. The combining rule is
+  **worst-wins**, not an average: averaging would let one detached pad be
+  diluted by three good ones, which is the same shape as the dropout ratio
+  threshold rejected above — a tolerance constant with nothing behind it.
+  Electrodes that cannot be measured are skipped rather than counted bad.
+
+  Electrodes are deliberately not indexed by data channel. The analysis
+  consumes one channel; how many pads produce it belongs to the device, and
+  indexing by channel position would make any pad that does not carry its own
+  channel unrepresentable.
+
+  What is still missing is a **source that reports it**. `SimulatedEegSource`
+  is single-electrode end to end — one coupling scalar mixed into one output
+  sample — so nothing per-electrode is demonstrable or regression-testable
+  yet. Two known consequences to fix when it is wired:
+
+  - `_publishQuality` emits only when `level` or the fault *set* changes, so a
+    pad sliding 0.9 → 0.4 while another is already detached would emit
+    nothing, and a per-pad contact view would never repaint. The change
+    detector has to compare the per-electrode vector, not the derived scalar.
+  - `SignalQualityGate` snapshots `Set<SignalFault>` at contamination, which
+    erases *which* pad was bad across the settling window — exactly when the
+    user is holding one down waiting for the reading to come back.
+
+  Also unresolved, and not resolvable from the docs: **the montage**. Nothing
+  written specifies electrode count, a reference, or which pads feed the
+  analysis. Worst-wins over every reported electrode is the conservative
+  reading — it withholds rather than over-publishes — but a device whose spare
+  pad does not feed the engine would be over-gated by it, and that is a
+  question for the first real patch, not for this file.
 - **Rate-aware DSP.** Step 3 of `docs/hardware-seam.md`, unchanged.
