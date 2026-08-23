@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../session/reset_record.dart';
 import '../theme/kore_theme.dart';
+import 'stat_figure.dart';
 
 /// Step 4 of the core loop: reinforce with streaks and recovery trends.
 ///
@@ -15,7 +16,18 @@ class RecoveryCard extends StatelessWidget {
   /// so a single render cannot straddle midnight.
   final DateTime today;
 
-  const RecoveryCard({super.key, required this.history, required this.today});
+  /// Null on the history screen, which is already the destination. The whole
+  /// card is the affordance, exactly as `LoadTrendCard` is - two destinations
+  /// do not justify a tab bar, and a tap on the summary someone is already
+  /// reading is free.
+  final VoidCallback? onOpen;
+
+  const RecoveryCard({
+    super.key,
+    required this.history,
+    required this.today,
+    this.onOpen,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -26,8 +38,7 @@ class RecoveryCard extends StatelessWidget {
     final drop = history.averageDrop;
     final clarity = history.averageClarity;
 
-    return Card(
-      child: Padding(
+    final body = Padding(
         padding: const EdgeInsets.all(KoreSpace.lg),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -40,7 +51,12 @@ class RecoveryCard extends StatelessWidget {
                 const Spacer(),
                 Flexible(
                   child: Text(
-                    '${history.completedInLastDays(today, 7)} in the last 7 days',
+                    onOpen == null
+                        ? '${history.completedInLastDays(today, 7)} in the last 7 days'
+                        // A word rather than a chevron, for the reason the
+                        // trend card gives: two bundled fonts, no icon set,
+                        // and a word survives every accessibility setting.
+                        : 'See every reset',
                     style: text.labelSmall,
                     textAlign: TextAlign.end,
                   ),
@@ -51,47 +67,29 @@ class RecoveryCard extends StatelessWidget {
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _stat(context, streak > 0 ? '$streak' : '--', 'day streak'),
-                _stat(context, drop == null ? '--' : drop.round().toString(),
-                    'avg drop'),
-                _stat(context,
-                    clarity == null ? '--' : clarity.toStringAsFixed(1),
-                    'avg clarity'),
+                StatFigure(
+                  value: streak > 0 ? '$streak' : '--',
+                  label: 'day streak',
+                  measured: streak > 0,
+                ),
+                StatFigure.orDash(
+                    value: drop?.round().toString(), label: 'avg drop'),
+                StatFigure.orDash(
+                    value: clarity?.toStringAsFixed(1), label: 'avg clarity'),
               ],
             ),
           ],
         ),
-      ),
-    );
-  }
+      );
 
-  Widget _stat(BuildContext context, String value, String label) {
-    final k = context.kore;
-    // A dash is the absence of a measurement, not a good one. Giving it the
-    // calm colour would let an empty statistic read as a win.
-    final measured = value != '--';
-
-    return Expanded(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            value,
-            style: KoreType.numerals(
-              fontSize: KoreType.size28,
-              color: measured ? k.calm : k.unmeasured,
+    return Card(
+      child: onOpen == null
+          ? body
+          : InkWell(
+              onTap: onOpen,
+              borderRadius: BorderRadius.circular(KoreRadius.lg),
+              child: Semantics(button: true, child: body),
             ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            label,
-            style: Theme.of(context)
-                .textTheme
-                .labelSmall
-                ?.copyWith(color: k.textSecondary),
-          ),
-        ],
-      ),
     );
   }
 }

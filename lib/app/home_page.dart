@@ -14,6 +14,7 @@ import '../widgets/load_trend_card.dart';
 import '../widgets/recovery_card.dart';
 import '../widgets/reset_protocol_sheet.dart';
 import '../widgets/signal_notice.dart';
+import 'history_screen.dart';
 import 'trend_screen.dart';
 
 /// The live dashboard.
@@ -283,7 +284,11 @@ class _HomePageState extends State<HomePage> {
       ],
       if (_session.resetHistory.completedCount > 0) ...[
         const SizedBox(height: KoreSpace.md),
-        RecoveryCard(history: _session.resetHistory, today: today),
+        RecoveryCard(
+          history: _session.resetHistory,
+          today: today,
+          onOpen: () => _openHistory(today),
+        ),
       ],
       // Only where there is something to simulate. On a real patch this is
       // not a hidden panel or a debug flag - the source offers no levers, so
@@ -293,6 +298,15 @@ class _HomePageState extends State<HomePage> {
         _demoControls(context),
       ],
     ];
+  }
+
+  void _openHistory(DateTime today) {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => HistoryScreen(
+        history: _session.resetHistory,
+        today: today,
+      ),
+    ));
   }
 
   void _openTrend(DateTime today) {
