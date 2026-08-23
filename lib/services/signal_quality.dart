@@ -46,6 +46,96 @@ enum SignalQualityLevel {
   unusable,
 }
 
+/// How one electrode's contact reads, as a word.
+///
+/// The word exists because colour may never be the only channel carrying a
+/// state - see `docs/design/DESIGN.md`. It matters more here than on the
+/// gauge: the two warm ramp stops a contact chip would otherwise rely on
+/// separate by only dE 4.0 under deuteranopia, so the redundant word is
+/// load-bearing rather than a courtesy.
+enum ElectrodeContactState {
+  /// Coupling is not the limiting factor on the reading.
+  good,
+
+  /// Still coupled, but degrading. The user is told before it stops being a
+  /// measurement of them.
+  weak,
+
+  /// Coupling has collapsed. Not silence - a dry electrode coming off produces
+  /// a large sub-alpha artifact that reads as strain.
+  noContact,
+
+  /// This electrode has no contact measurement at all.
+  ///
+  /// Deliberately distinct from [good]. A device with no impedance front end
+  /// must not have its silence rendered as health - absence of evidence is not
+  /// evidence of a fault, and it is not evidence of health either.
+  unmeasured,
+}
+
+/// One electrode's contact, named the way the person wearing it would name it.
+///
+/// Naming is a product decision, not a cosmetic one. The first generated pass
+/// at the pairing screen labelled these FP1/FPZ/T3/T4, which reads as clinical
+/// instrumentation and cuts directly against a positioning that is explicitly
+/// not a medical device. Labels here are positional and lay - "Left pad" - and
+/// are meant to be resolved against the placement diagram rather than
+/// memorised.
+///
+/// Note that electrodes are *not* data channels. The analysis consumes a
+/// single channel; how many electrodes produce it is a property of the device.
+/// Indexing contact by data-channel position would make any electrode that
+/// does not carry its own channel unrepresentable.
+class ElectrodeContact {
+  /// Stable machine key, e.g. `left`. Never shown to anyone.
+  final String id;
+
+  /// User-facing name. Positional and lay, never a 10-20 designator.
+  final String label;
+
+  /// Electrode-skin coupling, 0 (off the head) to 1 (perfect), or null when
+  /// this electrode has no way to be measured.
+  ///
+  /// Nullable per electrode, not merely per device: a patch may measure
+  /// impedance on some pads and not others, and fabricating 1.0 for the rest
+  /// is the same lie the aggregate field refuses to tell.
+  final double? contact;
+
+  /// Measured impedance for this electrode, when available. Informational -
+  /// it never gates anything, for the same reason the aggregate does not.
+  final double? impedanceKOhm;
+
+  const ElectrodeContact({
+    required this.id,
+    required this.label,
+    required this.contact,
+    this.impedanceKOhm,
+  });
+
+  bool get isMeasured => contact != null;
+
+  /// This electrode's banded state, against the same constants the aggregate
+  /// is banded by - there is only one definition of "good contact".
+  ElectrodeContactState get state {
+    final c = contact;
+    if (c == null) return ElectrodeContactState.unmeasured;
+    if (c < SignalQuality.kContactDetached) return ElectrodeContactState.noContact;
+    if (c < SignalQuality.kContactGood) return ElectrodeContactState.weak;
+    return ElectrodeContactState.good;
+  }
+
+  /// Whether this electrode is what is stopping the signal being trusted.
+  bool get needsAttention =>
+      state == ElectrodeContactState.weak ||
+      state == ElectrodeContactState.noContact;
+
+  @override
+  String toString() {
+    final c = contact == null ? 'unmeasured' : contact!.toStringAsFixed(2);
+    return 'ElectrodeContact($id, $c, ${state.name})';
+  }
+}
+
 /// A live report from an [EegSource] on whether its signal is worth believing.
 ///
 /// This is the type that closes KORE's most dangerous gap. Every other part of
@@ -124,19 +214,66 @@ class SignalQuality {
   /// The rate the device claims, and the one the DSP was built against.
   final double nominalRateHz;
 
+  /// Per-electrode contact, when the device reports it. Empty when it does
+  /// not, which is not the same as reporting that its electrodes are fine.
+  ///
+  /// This is the detail [contact] is rolled up from, kept rather than
+  /// discarded because the aggregate cannot answer the only question the user
+  /// can act on: *which pad*. "Contact is poor" is not an instruction;
+  /// "press the left pad down until it reads" is.
+  ///
+  /// Not indexed by data channel - see [ElectrodeContact].
+  final List<ElectrodeContact> electrodes;
+
   const SignalQuality({
     required this.contact,
     required this.measuredRateHz,
     required this.nominalRateHz,
     this.impedanceKOhm,
     this.droppedSamples = 0,
+    this.electrodes = const [],
   });
+
+  /// A report built from per-electrode measurements.
+  ///
+  /// [contact] is rolled up as the *worst* measured electrode, not an average.
+  /// Averaging would let one detached pad be diluted by three good ones, which
+  /// is the same shape as the dropout ratio threshold this file already
+  /// refuses: a tolerance constant with nothing behind it. There is no such
+  /// thing as a harmless detached electrode in a montage the analysis is
+  /// summing over.
+  ///
+  /// Electrodes that cannot be measured are skipped rather than counted as
+  /// bad. An unmeasurable pad is not evidence of a fault - and, per [level],
+  /// not evidence of health either.
+  factory SignalQuality.fromElectrodes({
+    required List<ElectrodeContact> electrodes,
+    required double measuredRateHz,
+    required double nominalRateHz,
+    int droppedSamples = 0,
+  }) {
+    ElectrodeContact? worst;
+    for (final e in electrodes) {
+      final c = e.contact;
+      if (c == null) continue;
+      if (worst == null || c < worst.contact!) worst = e;
+    }
+    return SignalQuality(
+      contact: worst?.contact,
+      impedanceKOhm: worst?.impedanceKOhm,
+      droppedSamples: droppedSamples,
+      measuredRateHz: measuredRateHz,
+      nominalRateHz: nominalRateHz,
+      electrodes: List.unmodifiable(electrodes),
+    );
+  }
 
   /// A source behaving perfectly at its nominal rate.
   const SignalQuality.pristine(double rateHz)
       : contact = 1.0,
         impedanceKOhm = null,
         droppedSamples = 0,
+        electrodes = const [],
         measuredRateHz = rateHz,
         nominalRateHz = rateHz;
 
@@ -156,6 +293,36 @@ class SignalQuality {
   /// False is not a fault, but nothing downstream may claim the contact was
   /// verified - the UI says "contact not measured", never "contact good".
   bool get contactMeasured => contact != null;
+
+  /// Whether this report carries per-electrode detail at all.
+  ///
+  /// False means the device did not break contact down, not that it has one
+  /// electrode. A UI that wants to name a pad must check this first and fall
+  /// back to the undifferentiated wording, rather than inventing a pad name.
+  bool get hasPerElectrodeContact => electrodes.isNotEmpty;
+
+  /// The measured electrode limiting the reading, or null when none of them
+  /// can be measured.
+  ElectrodeContact? get worstElectrode {
+    ElectrodeContact? worst;
+    for (final e in electrodes) {
+      final c = e.contact;
+      if (c == null) continue;
+      if (worst == null || c < worst.contact!) worst = e;
+    }
+    return worst;
+  }
+
+  /// Every electrode the user could do something about, worst first.
+  ///
+  /// Unmeasured electrodes are excluded: there is no instruction to give for
+  /// a pad whose state is unknown, and listing it under a heading about what
+  /// to fix would imply one.
+  List<ElectrodeContact> get electrodesNeedingAttention {
+    final out = electrodes.where((e) => e.needsAttention).toList()
+      ..sort((a, b) => a.contact!.compareTo(b.contact!));
+    return List.unmodifiable(out);
+  }
 
   /// Absolute rate error as a fraction of nominal. Zero when the source does
   /// not report a rate, since an unmeasured clock cannot be shown to drift.

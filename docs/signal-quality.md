@@ -186,6 +186,51 @@ would agree with itself and with nothing else.
   quality stays at its last value. The `qualityUpdates` stream is the seam
   through which a real source reports its own stall; a timer that notices
   silence on the app side is the belt to that braces.
-- **Multi-channel quality.** `contact` is one number for one electrode. A patch
-  with four will want per-channel reports and a rule for combining them.
+- **Multi-channel quality — the type exists, no source fills it.**
+  `SignalQuality.electrodes` carries per-electrode contact, and
+  `SignalQuality.fromElectrodes` rolls it up. The combining rule is
+  **worst-wins**, not an average: averaging would let one detached pad be
+  diluted by three good ones, which is the same shape as the dropout ratio
+  threshold rejected above — a tolerance constant with nothing behind it.
+  Electrodes that cannot be measured are skipped rather than counted bad.
+
+  Electrodes are deliberately not indexed by data channel. The analysis
+  consumes one channel; how many pads produce it belongs to the device, and
+  indexing by channel position would make any pad that does not carry its own
+  channel unrepresentable.
+
+  `SimulatedEegSource` now reports it. The patch has two pads by default,
+  `left` and `right`, each with its own coupling, its own ramp and its own
+  impedance. `setPadContact`, `degradePad` and `detachPad` drive one pad;
+  `setContact`, `degradeContact`, `detachElectrode` and `restoreContact` still
+  drive the whole patch, so the scripted demo and every test written before
+  pads existed mean what they always meant.
+
+  The signal model was deliberately left alone. `ScenarioEEGGenerator` still
+  mixes one coupling into one output sample, driven by the worst measurable
+  pad. Per-pad detail is something the *device* reports, not something the
+  signal model has to represent — which is also what keeps the bit-for-bit
+  identity test intact, the one asserting that at `contact == 1.0` the
+  generator's output is unchanged sample for sample.
+
+  Fixed while wiring it: `_publishQuality` compared only `level` and the fault
+  *set*, so a pad sliding 0.9 → 0.4 while another was already detached moved
+  neither and emitted nothing. A per-pad view subscribed to `qualityUpdates`
+  would never have repainted, and the user would have re-seated one pad and
+  stopped. It now also compares each pad's *banded state* — banded rather than
+  raw, because comparing raw coupling would emit on every tick of a ramp and
+  turn a stream of transitions into a stream of samples.
+
+  Still open: `SignalQualityGate` snapshots `Set<SignalFault>` at
+  contamination, which erases *which* pad was bad across the settling window —
+  exactly when the user is holding one down waiting for the reading to come
+  back. The gate needed no changes to keep working, so this is a gap in what
+  it can *say*, not a break in what it does.
+
+  Also unresolved, and not resolvable from the docs: **the montage**. Nothing
+  written specifies electrode count, a reference, or which pads feed the
+  analysis. Worst-wins over every reported electrode is the conservative
+  reading — it withholds rather than over-publishes — but a device whose spare
+  pad does not feed the engine would be over-gated by it, and that is a
+  question for the first real patch, not for this file.
 - **Rate-aware DSP.** Step 3 of `docs/hardware-seam.md`, unchanged.
