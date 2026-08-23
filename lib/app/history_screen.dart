@@ -201,6 +201,11 @@ class _ResetChip extends StatelessWidget {
 
     return Container(
       width: 132,
+      // A floor, not a fixed height: an abandoned chip has less in it than a
+      // completed one, and a row of chips at two different heights reads as
+      // two different kinds of thing. Text that outgrows it still gets its
+      // room.
+      constraints: const BoxConstraints(minHeight: 96),
       padding: const EdgeInsets.all(KoreSpace.sm),
       decoration: BoxDecoration(
         color: kore.surface,
@@ -228,13 +233,13 @@ class _ResetChip extends StatelessWidget {
             ),
             const SizedBox(height: KoreSpace.sm),
             if (abandoned) ...[
+              // No second line explaining that there is no measurement. The
+              // absent figure is the explanation, and the word above it is
+              // already the whole story.
               Text('ABANDONED',
                   style: text.labelSmall?.copyWith(
                       color: kore.unmeasured,
                       letterSpacing: KoreType.trackedLabel)),
-              const SizedBox(height: 2),
-              Text('no measurement',
-                  style: text.labelSmall?.copyWith(color: kore.unmeasured)),
             ] else ...[
               // Uncoloured on purpose, in both directions. The check-in sheet
               // states a rise in exactly the same secondary text as a fall,

@@ -1,4 +1,4 @@
-package com.example.kore
+package com.aurikology.kore
 
 import io.flutter.embedding.android.FlutterActivity
 

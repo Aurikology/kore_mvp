@@ -38,7 +38,14 @@ class WelcomeScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: kore.canvas,
       body: SafeArea(
-        child: Padding(
+        // The same 720 px column the dashboard's medium layout uses. Left to
+        // itself this text runs the full width of a desktop window, and a
+        // line that long is harder to read than the phone version it was
+        // written for.
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 720),
+            child: Padding(
           padding: const EdgeInsets.fromLTRB(
               KoreSpace.xl, KoreSpace.xxl, KoreSpace.xl, KoreSpace.xl),
           // Scrolls with a minHeight rather than expanding freely: at 320 px
@@ -87,6 +94,8 @@ class WelcomeScreen extends StatelessWidget {
                     ),
                   ],
                 ),
+              ),
+            ),
               ),
             ),
           ),

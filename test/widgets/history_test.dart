@@ -105,8 +105,10 @@ void main() {
     // Hiding them would flatter the record, which is the same reason the
     // averages refuse to count them.
     expect(find.text('ABANDONED'), findsOneWidget);
-    expect(find.text('no measurement'), findsOneWidget);
     expect(find.text('DROP'), findsOneWidget, reason: 'only the completed one');
+    // No second line explaining that there is no measurement - the absent
+    // figure is the explanation.
+    expect(find.textContaining('no measurement'), findsNothing);
   });
 
   testWidgets('clarity is shown as dots only where it was answered',

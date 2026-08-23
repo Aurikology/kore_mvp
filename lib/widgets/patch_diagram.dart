@@ -121,9 +121,13 @@ class _HeadPainter extends CustomPainter {
     for (var i = 0; i < electrodes.length; i++) {
       final e = electrodes[i];
       final p = PatchDiagram.placementFor(e.id, i, electrodes.length);
+      // Scaled to sit *inside* the outline. The obvious scaling - the same
+      // factors the ellipse is drawn with - puts a pad exactly on the line at
+      // these offsets, which reads as an electrode balanced on the edge of
+      // someone's head.
       final at = Offset(
-        centre.dx + p.dx * radius * 1.6,
-        centre.dy + p.dy * radius * 1.8,
+        centre.dx + p.dx * radius * 1.25,
+        centre.dy + p.dy * radius * 1.5,
       );
 
       final colour = switch (e.state) {

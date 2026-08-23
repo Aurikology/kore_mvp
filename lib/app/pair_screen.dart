@@ -58,9 +58,14 @@ class _PairScreenState extends State<PairScreen> {
     return Scaffold(
       backgroundColor: kore.canvas,
       body: SafeArea(
-        child: AnimatedBuilder(
-          animation: _session,
-          builder: (context, _) => Padding(
+        // Same 720 px column as the dashboard's medium layout. A head diagram
+        // 1200 px wide is not a clearer head diagram.
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 720),
+            child: AnimatedBuilder(
+              animation: _session,
+              builder: (context, _) => Padding(
             padding: const EdgeInsets.fromLTRB(
                 KoreSpace.xl, KoreSpace.lg, KoreSpace.xl, KoreSpace.xl),
             child: Column(
@@ -70,6 +75,8 @@ class _PairScreenState extends State<PairScreen> {
                 const SizedBox(height: KoreSpace.xxl),
                 Expanded(child: _body(context)),
               ],
+            ),
+              ),
             ),
           ),
         ),
