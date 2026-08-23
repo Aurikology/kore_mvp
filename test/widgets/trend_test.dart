@@ -369,6 +369,13 @@ void main() {
       file.writeAsStringSync(jsonEncode({
         'version': KoreHistory.formatVersion,
         'resets': const [],
+        // A user with a fortnight of history has been through the first-run
+        // flow by definition. Without this the app opens on the welcome
+        // screen, which is correct behaviour and not what this test is about.
+        'app': {
+          'onboardingCompletedAt':
+              now.subtract(const Duration(days: 20)).toIso8601String(),
+        },
         'days': [
           for (final (ago, mean) in [(8, 50.0), (4, 54.0), (0, 58.0)])
             {
@@ -385,6 +392,12 @@ void main() {
       // fake clock never completes however long the test pumps for.
       await tester.runAsync(() async {
         await tester.pumpWidget(KoreApp(store: HistoryStore(file)));
+        // Two reads, so two waits. The launch gate reads the document to find
+        // out whether this is a first run, and the dashboard it then mounts
+        // reads it again for the history - and the second read only starts
+        // once the first has resolved a frame.
+        await Future<void>.delayed(const Duration(milliseconds: 150));
+        await tester.pump();
         await Future<void>.delayed(const Duration(milliseconds: 150));
       });
       await tester.pump();

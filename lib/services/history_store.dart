@@ -96,6 +96,21 @@ class HistoryStore {
   }) =>
       _writeMerged(profile: profile, days: days);
 
+  /// Records that the first-run flow has been completed, carrying everything
+  /// else forward untouched.
+  ///
+  /// Written the moment the user leaves the pairing screen rather than at the
+  /// end of their first session: the flow is finished when they have seen it,
+  /// and a crash before the first reset is not a reason to show them the
+  /// welcome screen again.
+  Future<void> markOnboarded(DateTime at) =>
+      _writeMerged(app: AppState(onboardingCompletedAt: at));
+
+  /// Whether the first-run flow has been completed. A file that cannot be read
+  /// reads as "no", which costs one avoidable screen and never skips the claim
+  /// boundary.
+  Future<bool> hasOnboarded() async => (await loadDocument()).app.hasOnboarded;
+
   /// Read-modify-write. The store re-reads before every write rather than
   /// holding the document in memory: a session only ever owns some of it, and
   /// writing back a whole document assembled from a partial view is how one
@@ -104,9 +119,10 @@ class HistoryStore {
     ResetHistory? resets,
     LoadProfile? profile,
     DailyLoadLog? days,
+    AppState? app,
   }) async {
     final merged = (await loadDocument())
-        .copyWith(resets: resets, profile: profile, days: days);
+        .copyWith(resets: resets, profile: profile, days: days, app: app);
 
     try {
       await file.parent.create(recursive: true);

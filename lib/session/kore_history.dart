@@ -199,6 +199,50 @@ class DailyLoadLog {
   }
 }
 
+/// What the app itself remembers between runs, as distinct from what it has
+/// measured.
+///
+/// One field so far, and it earns the section: without it the first run cannot
+/// be told from the hundredth, and the welcome screen either never appears or
+/// appears every time. It sits in the same document as the history rather than
+/// in a second file because the store's read-modify-write already guarantees
+/// that two writers cannot erase each other's half, and a second file would
+/// need that guarantee again from scratch.
+///
+/// Nothing here is a preference. Settings, if they ever exist, are a different
+/// question from "has this person seen the claim boundary yet", and mixing
+/// them would make this section a junk drawer.
+class AppState {
+  /// When the user finished the first-run flow, or null if they never have.
+  ///
+  /// A timestamp rather than a bool because the useful questions later are
+  /// about *when* - whether a baseline predates the last re-seating, whether
+  /// the claim boundary was shown before or after a copy change - and a bool
+  /// answers none of them.
+  final DateTime? onboardingCompletedAt;
+
+  const AppState({this.onboardingCompletedAt});
+
+  static const AppState empty = AppState();
+
+  bool get hasOnboarded => onboardingCompletedAt != null;
+
+  Map<String, Object?> toJson() => {
+        if (onboardingCompletedAt != null)
+          'onboardingCompletedAt': onboardingCompletedAt!.toIso8601String(),
+      };
+
+  /// Anything unparseable reads as "not yet onboarded", which shows the
+  /// welcome screen a second time. That is the safe direction to fail: the
+  /// cost is one avoidable screen, where the other direction skips the claim
+  /// boundary entirely.
+  static AppState fromJson(Object? raw) {
+    if (raw is! Map) return empty;
+    final at = DateTime.tryParse(raw['onboardingCompletedAt']?.toString() ?? '');
+    return AppState(onboardingCompletedAt: at);
+  }
+}
+
 /// Everything KORE keeps on disk, as one document.
 ///
 /// v1 was a bare JSON array of reset records. It had nowhere to put the
@@ -206,18 +250,22 @@ class DailyLoadLog {
 /// from one session to the next, and nowhere to put a longitudinal record that
 /// survives the reset log being trimmed. v2 is an object with a version tag,
 /// and [fromJson] reads both - a v1 file is migrated on the next write rather
-/// than discarded, because those records are the user's streak.
+/// than discarded, because those records are the user's streak. v3 adds
+/// [AppState], and reads exactly the same way: a v2 file has no `app` key, so
+/// the section reads empty and upgrades on the next write.
 class KoreHistory {
-  static const int formatVersion = 2;
+  static const int formatVersion = 3;
 
   final ResetHistory resets;
   final LoadProfile profile;
   final DailyLoadLog days;
+  final AppState app;
 
   const KoreHistory({
     required this.resets,
     required this.profile,
     required this.days,
+    this.app = AppState.empty,
   });
 
   static const KoreHistory empty = KoreHistory(
@@ -230,11 +278,13 @@ class KoreHistory {
     ResetHistory? resets,
     LoadProfile? profile,
     DailyLoadLog? days,
+    AppState? app,
   }) =>
       KoreHistory(
         resets: resets ?? this.resets,
         profile: profile ?? this.profile,
         days: days ?? this.days,
+        app: app ?? this.app,
       );
 
   Map<String, Object?> toJson() => {
@@ -242,6 +292,7 @@ class KoreHistory {
         'resets': [for (final r in resets.records) r.toJson()],
         'profile': profile.toJson(),
         'days': days.toJson(),
+        'app': app.toJson(),
       };
 
   /// Reads either format. Anything unrecognisable reads as [empty], in the
@@ -263,6 +314,7 @@ class KoreHistory {
       resets: _resetsFrom(decoded['resets']),
       profile: LoadProfile.tryFromJson(decoded['profile']) ?? LoadProfile.fresh,
       days: DailyLoadLog.fromJson(decoded['days']),
+      app: AppState.fromJson(decoded['app']),
     );
   }
 

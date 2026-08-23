@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'app/home_page.dart';
+import 'app/kore_launch.dart';
 import 'services/history_store.dart';
 import 'theme/kore_theme.dart';
 
@@ -29,7 +29,10 @@ class KoreApp extends StatelessWidget {
       // a dark room and at noon on a bright campus, and the phone already
       // knows which of those it is.
       themeMode: ThemeMode.system,
-      home: HomePage(store: store),
+      // Not the dashboard directly: a first run has two screens in front of
+      // it, and which one the app opens on is a persisted question. See
+      // [KoreLaunch].
+      home: KoreLaunch(store: store),
       debugShowCheckedModeBanner: false,
     );
   }

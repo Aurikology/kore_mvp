@@ -265,7 +265,14 @@ class KoreSession extends ChangeNotifier {
 
   // --- Lifecycle ----------------------------------------------------------
 
+  /// Idempotent, and that is not defensive coding - it is the first-run flow.
+  /// The pairing screen starts the session so its contact check is live, and
+  /// the dashboard starts the same session again when it mounts. A second call
+  /// must not double-subscribe to the block stream, which would push every
+  /// sample through the engine twice.
   Future<void> start() async {
+    if (_subscription != null) return;
+
     // Load first so the dashboard shows the real streak on the first frame
     // rather than flashing a zero and correcting itself - and, since this
     // completes before a single sample arrives, so the baseline capture that
@@ -290,6 +297,14 @@ class KoreSession extends ChangeNotifier {
     _linkSubscription = source.linkUpdates.listen(_onLink);
     await source.start();
   }
+
+  /// Drop the link without tearing the session down. The pairing screen's
+  /// Cancel; [start] picks it back up.
+  ///
+  /// Goes through the session rather than having the screen call
+  /// `session.source.stop()` itself, so the read model stays the only thing
+  /// the UI talks to.
+  Future<void> disconnect() => source.stop();
 
   void _onLink(SourceLink link) => notifyListeners();
 
