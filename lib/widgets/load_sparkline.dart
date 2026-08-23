@@ -6,9 +6,15 @@ import '../theme/kore_theme.dart';
 ///
 /// The gauge answers "how loaded am I now"; this answers "and where was I
 /// heading", which is what makes a reset visibly work.
+///
+/// **A null is a hole, and it is drawn as one.** The app is suspended
+/// constantly on a phone, and the minutes it spent not measuring must not be
+/// joined up into a line it never observed - a straight segment across a gap
+/// reads as a measurement of calm. The trace breaks and picks up on the far
+/// side, at the x position the time actually fell at.
 class LoadSparkline extends StatelessWidget {
-  /// Oldest to newest, 0-100.
-  final List<double> values;
+  /// Oldest to newest, 0-100. Null where nothing was measured.
+  final List<double?> values;
 
   final double height;
 
@@ -35,16 +41,26 @@ class LoadSparkline extends StatelessWidget {
           thresholdLine: thresholdLine,
           rule: k.border,
           // The trace takes the colour of the *latest* reading, so the trend
-          // and the gauge always agree on what the state is.
-          trace: values.isEmpty ? k.unmeasured : k.forLoad(values.last),
+          // and the gauge always agree on what the state is. The latest
+          // reading is the last one that exists, not the last slot.
+          trace: _latest(values) == null
+              ? k.unmeasured
+              : k.forLoad(_latest(values)!),
         ),
       ),
     );
   }
 }
 
+double? _latest(List<double?> values) {
+  for (var i = values.length - 1; i >= 0; i--) {
+    if (values[i] != null) return values[i];
+  }
+  return null;
+}
+
 class _SparklinePainter extends CustomPainter {
-  final List<double> values;
+  final List<double?> values;
   final double? thresholdLine;
   final Color rule;
   final Color trace;
@@ -78,44 +94,62 @@ class _SparklinePainter extends CustomPainter {
     // the panel as data arrives instead of rescaling under the viewer.
     final dx = size.width / (values.length - 1);
 
-    final path = Path()..moveTo(0, y(values.first));
-    for (var i = 1; i < values.length; i++) {
-      path.lineTo(i * dx, y(values[i]));
+    final stroke = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = KoreSparkline.strokeWidth
+      ..strokeJoin = StrokeJoin.round
+      ..color = trace;
+
+    final fillPaint = Paint()
+      ..shader = LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [
+          trace.withValues(alpha: KoreSparkline.fillAlphaTop),
+          trace.withValues(alpha: 0.0),
+        ],
+      ).createShader(Offset.zero & size);
+
+    // One path per run of consecutive measurements. Each run keeps the x
+    // position its samples actually occupy, so the width of a hole is the
+    // duration of the hole rather than a join.
+    var i = 0;
+    Offset? head;
+    while (i < values.length) {
+      if (values[i] == null) {
+        i++;
+        continue;
+      }
+
+      final points = <Offset>[];
+      while (i < values.length && values[i] != null) {
+        points.add(Offset(i * dx, y(values[i]!)));
+        i++;
+      }
+      head = points.last;
+
+      // A single reading with holes either side has no line to draw. It is
+      // still a measurement, so it is drawn - as the head dot, below.
+      if (points.length < 2) continue;
+
+      final path = Path()..moveTo(points.first.dx, points.first.dy);
+      for (final p in points.skip(1)) {
+        path.lineTo(p.dx, p.dy);
+      }
+
+      canvas.drawPath(
+        Path.from(path)
+          ..lineTo(points.last.dx, size.height)
+          ..lineTo(points.first.dx, size.height)
+          ..close(),
+        fillPaint,
+      );
+      canvas.drawPath(path, stroke);
     }
 
-    // Soft fill under the trace for weight.
-    final fill = Path.from(path)
-      ..lineTo((values.length - 1) * dx, size.height)
-      ..lineTo(0, size.height)
-      ..close();
-
-    canvas.drawPath(
-      fill,
-      Paint()
-        ..shader = LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            trace.withValues(alpha: KoreSparkline.fillAlphaTop),
-            trace.withValues(alpha: 0.0),
-          ],
-        ).createShader(Offset.zero & size),
-    );
-
-    canvas.drawPath(
-      path,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = KoreSparkline.strokeWidth
-        ..strokeJoin = StrokeJoin.round
-        ..color = trace,
-    );
-
-    canvas.drawCircle(
-      Offset((values.length - 1) * dx, y(values.last)),
-      KoreSparkline.headRadius,
-      Paint()..color = trace,
-    );
+    if (head != null) {
+      canvas.drawCircle(head, KoreSparkline.headRadius, Paint()..color = trace);
+    }
   }
 
   @override
@@ -123,7 +157,7 @@ class _SparklinePainter extends CustomPainter {
       old.trace != trace ||
       old.rule != rule ||
       old.values.length != values.length ||
-      (values.isNotEmpty &&
-          old.values.isNotEmpty &&
-          old.values.last != values.last);
+      // The last *reading*, not the last slot: an empty list has neither, and
+      // a list ending in a hole has only the former.
+      _latest(old.values) != _latest(values);
 }

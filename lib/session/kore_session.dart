@@ -50,11 +50,16 @@ class KoreSession extends ChangeNotifier {
   /// reading asks this, and nothing asks the source directly.
   final SignalQualityGate signalGate = SignalQualityGate();
 
-  final ListQueue<double> _history = ListQueue<double>();
+  /// The sparkline's window. Null entries are stretches the app was not
+  /// measuring through - see [resume].
+  final ListQueue<double?> _history = ListQueue<double?>();
 
   StreamSubscription<SampleBlock>? _subscription;
   StreamSubscription<SignalQuality>? _qualitySubscription;
   StreamSubscription<SourceLink>? _linkSubscription;
+
+  /// When the app went into the background, or null while it is in front.
+  DateTime? _pausedAt;
 
   bool _resetActive = false;
   int _resetSecondsRemaining = 0;
@@ -78,9 +83,21 @@ class KoreSession extends ChangeNotifier {
   double _daySum = 0;
   double _dayPeak = 0;
 
-  KoreSession({EegSource? source, DspEngine? engine, this.store})
-      : source = source ?? SimulatedEegSource(),
-        engine = engine ?? createDspEngine();
+  /// Wall clock, injectable for the same reason the source's is.
+  ///
+  /// Only the suspend/resume gap reads it. That gap is measured in real
+  /// minutes, and a test cannot wait out four of them - everything else here
+  /// that needs the date already takes it as a parameter.
+  final DateTime Function() now;
+
+  KoreSession({
+    EegSource? source,
+    DspEngine? engine,
+    this.store,
+    DateTime Function()? now,
+  })  : source = source ?? SimulatedEegSource(),
+        engine = engine ?? createDspEngine(),
+        now = now ?? DateTime.now;
 
   // --- Read model for the UI ---------------------------------------------
 
@@ -197,8 +214,9 @@ class KoreSession extends ChangeNotifier {
   /// was built for.
   double get measuredSampleRateHz => signalQuality.measuredRateHz;
 
-  /// Oldest-to-newest index history, for the sparkline.
-  List<double> get history => List.unmodifiable(_history);
+  /// Oldest-to-newest index history, for the sparkline. Null where nothing was
+  /// measured.
+  List<double?> get history => List.unmodifiable(_history);
 
   bool get resetActive => _resetActive;
 
@@ -297,6 +315,77 @@ class KoreSession extends ChangeNotifier {
     _linkSubscription = source.linkUpdates.listen(_onLink);
     await source.start();
   }
+
+  /// The app has gone into the background.
+  ///
+  /// `start()` assumed a stream that never stops, which is true of a desktop
+  /// window and false of a phone: the OS suspends the app constantly, and it
+  /// does not ask. Stopping the source is the honest response - a session
+  /// whose timers have been throttled to nothing is not measuring, and should
+  /// not be holding a subscription open pretending otherwise.
+  Future<void> pause() async {
+    if (_pausedAt != null) return;
+    _pausedAt = now();
+    await source.stop();
+    notifyListeners();
+  }
+
+  /// The app is back.
+  ///
+  /// The interesting case is not restarting the source, it is what happens to
+  /// the gap. The index is a 2 s Hann-windowed analysis over a ring buffer
+  /// written by position, so samples from either side of a suspension sit
+  /// adjacent in that ring and the window spanning them reads a discontinuity
+  /// as broadband power in theta and alpha at once. Nothing about that is
+  /// visible downstream: the number moves, the predictor sees a trajectory,
+  /// and neither is describing the user.
+  ///
+  /// So a gap longer than one analysis window is refused rather than spliced.
+  /// The engine's ring and filters are cleared, the predictor's trajectory
+  /// with them, the gate is told to require a full clean window before
+  /// believing a frame again, and the sparkline gets a hole rather than a line
+  /// drawn across minutes nobody measured.
+  ///
+  /// A gap *shorter* than one window is left alone deliberately. Every one of
+  /// those costs a two-second settle, and a phone that flickers in and out of
+  /// the background for half a second at a time would spend its life settling
+  /// and never publish anything.
+  Future<void> resume() async {
+    final since = _pausedAt;
+    _pausedAt = null;
+    if (since == null) return;
+
+    final gap = now().difference(since);
+    if (gap >= _minimumGap) {
+      engine.reset();
+      predictor.reset();
+      // Not `dropout`: nothing was dropped by the radio, and the fix the user
+      // would be offered for one ("move closer to the device") is nonsense
+      // here. `settling` says what is true - the reading is being taken again
+      // - and asks nothing of anybody.
+      signalGate.contaminate(const {SignalFault.settling});
+
+      // A hole, not a truncation. The readings before the suspension were
+      // real and stay on the chart; what must not happen is a straight line
+      // joining them to the ones after, which reads as a measurement of calm
+      // across exactly the minutes there was no measurement at all.
+      if (_history.isNotEmpty && _history.last != null) {
+        _history.addLast(null);
+        while (_history.length > historyLength) {
+          _history.removeFirst();
+        }
+      }
+    }
+
+    await source.start();
+    notifyListeners();
+  }
+
+  /// One analysis window. Below this a gap cannot span a frame, so there is
+  /// nothing to refuse.
+  static final Duration _minimumGap = Duration(
+      milliseconds:
+          (DspConfig.windowSize / DspConfig.sampleRateHz * 1000).round());
 
   /// Drop the link without tearing the session down. The pairing screen's
   /// Cancel; [start] picks it back up.

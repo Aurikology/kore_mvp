@@ -88,6 +88,20 @@ class SignalQualityGate {
     if (block.quality.isUsable) _usableSamples += block.length;
   }
 
+  /// Treat the analysis window as contaminated by something the source has no
+  /// way to report.
+  ///
+  /// One caller: the session coming back from being suspended. The samples on
+  /// either side of that gap are individually fine and no report will ever say
+  /// otherwise, but a window spanning the boundary is a splice - the same
+  /// discontinuity a dropout produces, arriving through the operating system
+  /// rather than through the radio. Requiring a full clean window afterwards
+  /// is the mechanism that already exists for it.
+  void contaminate(Set<SignalFault> faults) {
+    _usableSamples = 0;
+    _faultsAtContamination = faults;
+  }
+
   void reset() {
     _reported = SignalQuality.unreported;
     _usableSamples = DspConfig.windowSize;

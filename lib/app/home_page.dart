@@ -41,7 +41,7 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   late final KoreSession _session;
   late final bool _ownsSession;
 
@@ -50,13 +50,35 @@ class _HomePageState extends State<HomePage> {
     super.initState();
     _ownsSession = widget.session == null;
     _session = widget.session ?? KoreSession(store: widget.store);
+    WidgetsBinding.instance.addObserver(this);
     _session.start();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     if (_ownsSession) _session.dispose();
     super.dispose();
+  }
+
+  /// On a phone this fires constantly. The session decides what a gap costs;
+  /// this only reports that there was one.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    switch (state) {
+      case AppLifecycleState.paused:
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.detached:
+        _session.pause();
+      case AppLifecycleState.resumed:
+        _session.resume();
+      case AppLifecycleState.inactive:
+        // A notification shade pulled halfway down, a call arriving and being
+        // declined. The app is still on screen and still being handed
+        // samples; tearing the source down for it would turn every glance at
+        // the time into a two-second settle.
+        break;
+    }
   }
 
   Future<void> _openReset() async {

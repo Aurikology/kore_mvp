@@ -194,7 +194,11 @@ class SimulatedEegSource implements EegSource, DemoControls {
     await _establishLink();
     if (!_link.isLive) return;
     if (_injectedElapsedMicros == null) _clock = Stopwatch()..start();
-    _lastElapsedMicros = 0;
+    // Where the clock is now, not zero. On a fresh start those are the same
+    // thing; on a restart after the app was suspended they are not, and
+    // treating the whole suspension as elapsed acquisition time would deliver
+    // a catch-up burst of samples the device never handed over.
+    _lastElapsedMicros = _elapsedMicros;
     _timer = Timer.periodic(_tick, (_) => _pump());
   }
 

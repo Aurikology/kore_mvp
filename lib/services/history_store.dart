@@ -31,11 +31,18 @@ class HistoryStore {
 
   HistoryStore(this.file);
 
-  /// `%APPDATA%\KORE\history.json` on Windows, `~/.kore/history.json`
-  /// elsewhere, falling back to the system temp directory when neither
-  /// variable is set (some CI and service contexts).
+  /// `%APPDATA%\KORE\history.json` on Windows, the app's private files
+  /// directory on Android, `~/.kore/history.json` elsewhere, falling back to
+  /// the system temp directory when none of those can be worked out (some CI
+  /// and service contexts).
   factory HistoryStore.defaultLocation() {
     final env = Platform.environment;
+
+    if (Platform.isAndroid) {
+      return HistoryStore(
+          File('${androidBase(Directory.systemTemp.path).path}/history.json'));
+    }
+
     final base = Platform.isWindows
         ? (env['APPDATA'] ?? env['LOCALAPPDATA'])
         : env['HOME'];
@@ -45,6 +52,38 @@ class HistoryStore {
         : Directory(Platform.isWindows ? '$base/KORE' : '$base/.kore');
 
     return HistoryStore(File('${dir.path}/history.json'));
+  }
+
+  /// Where a KORE history belongs on Android, worked out from [tmpPath].
+  ///
+  /// This is the one place the zero-plugin property costs something real.
+  /// Everywhere else `dart:io` and an environment variable are enough;
+  /// Android sets no `HOME`, so the general path above lands on
+  /// `Directory.systemTemp` - which is the app's **cache** directory, and
+  /// Android deletes cache directories under storage pressure without asking.
+  /// A user's streak, baseline and fortnight of trend would evaporate the
+  /// first time their phone filled up, and nothing would say why.
+  ///
+  /// `path_provider` is the ordinary answer and is a plugin, which the project
+  /// refuses for reasons written up in `pubspec.yaml` - it is what keeps the
+  /// whole test suite running on the host VM with no Flutter binding. The
+  /// files directory is the cache directory's sibling, so it can be derived
+  /// rather than asked for.
+  ///
+  /// Deliberately conservative: if the path is not the shape this expects, it
+  /// falls through to the old behaviour rather than guessing. Losing history
+  /// to a cleared cache is bad; writing it somewhere outside the app's own
+  /// sandbox would be worse.
+  @visibleForTesting
+  static Directory androidBase(String tmpPath) {
+    const cache = '/cache';
+
+    if (tmpPath.endsWith(cache)) {
+      final root = tmpPath.substring(0, tmpPath.length - cache.length);
+      return Directory('$root/files/KORE');
+    }
+
+    return Directory('$tmpPath/kore');
   }
 
   /// The whole document: resets, the personal load profile, and the daily
