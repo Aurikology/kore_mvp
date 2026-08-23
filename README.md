@@ -6,10 +6,10 @@ nicotine and stimulants for managing academic strain.
 
 ## Status
 
-**Working desktop prototype, simulated signal.** The app builds and runs on
-Windows, computes a real Cognitive Load Index from a real DSP pipeline, and
-closes the detect → reset loop. There is no hardware yet: the EEG stream is
-synthetic. **The signal processing is genuine; only the electrode is
+**Working prototype on Windows and Android, simulated signal.** The app
+builds and runs on both, computes a real Cognitive Load Index from a real DSP
+pipeline, and closes the detect → reset loop. There is no hardware yet: the EEG
+stream is synthetic. **The signal processing is genuine; only the electrode is
 simulated.**
 
 | Area | State |
@@ -17,23 +17,30 @@ simulated.**
 | DSP pipeline (filtering, band power, index) | Implemented, unit-tested |
 | Live dashboard (gauge, trend, reset protocol) | Implemented |
 | Windows desktop build | Working |
-| Simulated EEG source | Implemented |
-| Native C++/FFI DSP path | Implemented and built on Windows; parity-tested against Dart |
+| Android build | Working, with the native DSP cross-compiled |
+| First run: welcome, pairing, contact check | Implemented |
+| Session history | Implemented |
+| Simulated EEG source | Implemented, with the link and every fault it can have |
+| Native C++/FFI DSP path | Implemented on Windows and Android; parity-tested against Dart |
+| Suspend and resume | Implemented; a gap is refused, never spliced |
 | BLE / real hardware | Not implemented (seam in place) |
-| Android build | Scaffold only; needs an Android SDK + NDK |
+| Notifications, screen-wake | Not implemented; both need platform code |
 | Post-reset check-in, streaks, persistence | Implemented, on-disk, no plugins |
 
 ## Running it
 
 ```bash
 flutter run -d windows
+flutter run -d <android device>
 ```
 
-No Android SDK, Developer Mode, or network connection required — the project
-has zero plugins and bundles its fonts.
+No Developer Mode or network connection required — the project has zero
+plugins and bundles its fonts. The Android build needs an SDK and, for the
+native DSP, an NDK; without the NDK it still builds and falls back to the Dart
+engine.
 
 ```bash
-flutter test                   # 264 tests, including the DSP assertions
+flutter test                   # 313 tests, including the DSP assertions
 dart run tool/cli_probe.dart   # sweep load levels and print the index curve
 ```
 
@@ -79,6 +86,21 @@ Measured end to end: load 0.15 → 29, 0.50 → 55, 0.75 → 72, 0.90 → 81.
 **4. The reset.** A 60 second guided box-breathing protocol. Simulated load
 decays as it runs, so the index visibly falls on the meter behind it — the
 closed loop the product is built around.
+
+**4b. On a phone.** The first run states what KORE claims before it shows a
+reading — it measures the balance of two EEG rhythms, it is a wellness tool and
+not a medical device, and it does not diagnose anything — and then pairs. The
+pairing screen's contact check is the one hardware demos skip, and it is the
+one that matters: a poor electrode does not produce an obviously broken
+reading, it produces a *plausible* one, so Continue stays disabled until every
+measurable pad is seated and the line under it names the pad rather than
+describing the fault.
+
+The app is also suspended constantly on a phone, which the desktop build never
+had to survive. A gap longer than one analysis window is refused rather than
+spliced: engine ring and filters cleared, predictor trajectory with them, a
+full clean window required before a frame is believed again, and a **hole** in
+the sparkline instead of a straight line across minutes nobody measured.
 
 **5. Confirm and reinforce.** On completion the app asks a single question —
 *how clear do you feel?* — on a 1–5 scale, and pairs the answer with the
@@ -150,10 +172,11 @@ log line rather than the app.
 
 ```
 lib/dsp/       filters, Goertzel, band power, the index
-lib/sources/   EegSource seam + simulated generator
-lib/session/   pipeline wiring, reset history, demo controls
+lib/sources/   EegSource seam, link state, demo controls, simulated generator
+lib/session/   pipeline wiring, reset history, quality gate, app state
 lib/services/  EEG stream types + on-disk history store
-lib/widgets/   gauge, sparkline, reset protocol, check-in, recovery
+lib/app/       launch gate, welcome, pairing, dashboard, trend, history
+lib/widgets/   gauge, sparkline, reset protocol, check-in, recovery, patch diagram
 cpp/           native DSP (C++/FFI), built into the Windows bundle
 docs/          product narrative and positioning
 landing-page/  static marketing site (Netlify)

@@ -24,9 +24,9 @@ this phase, not a treatment, not a generic meditation app.
 
 ## What exists today (working prototype)
 
-A **Flutter desktop app** running on Windows. Real DSP, simulated electrode —
-the signal processing is genuine; only the EEG source is synthetic. There is
-no server, no accounts, no network. 235 tests pass.
+A **Flutter app** running on Windows and Android. Real DSP, simulated
+electrode — the signal processing is genuine; only the EEG source is synthetic.
+There is no server, no accounts, no network. 313 tests pass.
 
 **Signal chain** (`lib/dsp/`), 256 Hz microvolt samples:
 - One-pole DC blocker at 0.5 Hz.
@@ -161,37 +161,87 @@ failure costs a log line rather than the app. `native_parity_test.dart` holds
 both engines to 1e-9 relative agreement; both are double precision so that
 tolerance is meaningful.
 
+**The link** (`lib/sources/source_link.dart`). `start()` returns a future that
+either completes or throws, which is the wrong shape for a radio: it scans,
+connects, drops and reconnects, and the user needs to see all of it.
+`SourceLink` publishes those states alongside the future, with the patch
+identity and a **nullable** battery on it — a device that cannot report one
+says so rather than showing full. It sits beside a `linkUpdates` stream for the
+same reason `qualityUpdates` exists, only sharper: a link that is scanning
+produces no blocks at all, so every state on the way to `streaming` is
+invisible from the sample stream. The pairing screen is made entirely of those
+states.
+
+**First run** (`lib/app/kore_launch.dart`). Welcome states the claim boundary
+before the first reading appears, because afterwards it reads as walking back
+something the user already believes. Pair is three states in one screen, and
+its contact check is where the honesty rule meets hardware: Continue is
+disabled until every *measurable* pad is seated, the line under it names the
+pad ("press the left pad down") rather than describing the fault, and an
+unmeasurable pad reads "Not measured" and blocks nothing — not evidence of a
+fault, not evidence of health. Shown once ever, recorded in an `AppState`
+section of the document; an unparseable section reads as *not* onboarded,
+because that costs one avoidable screen where the other direction skips the
+claim boundary entirely.
+
+**History** (`lib/app/history_screen.dart`). Every reset, newest first, grouped
+by day, reached by tapping the recovery card rather than from a tab bar.
+Abandoned resets are shown, greyed and labelled: abandonment is a retention
+signal and hiding it would flatter the record. The drop figure is uncoloured in
+both directions — the check-in sheet states a rise in the same secondary text
+as a fall, and a history that painted the good ones green would be grading the
+user rather than reporting the measurement.
+
+**Suspend and resume.** `start()` assumed a stream that never stops; a phone
+suspends the app constantly and does not ask. A gap longer than one analysis
+window is refused rather than spliced — samples from either side of a
+suspension sit adjacent in a ring buffer written by position, and the
+Hann-windowed Goertzel turns that discontinuity into broadband power landing in
+theta and alpha at once. So the ring and filters are cleared, the predictor
+trajectory with them, a full clean window is required before a frame is
+believed again, and the sparkline gets a **hole** rather than a line across
+minutes nobody measured. A gap shorter than one window is left alone: every
+refusal costs a two-second settle.
+
 **Seams already in place:**
 - `EegSource` — the hardware seam. `SimulatedEegSource` implements it today; a
   BLE source drops in behind the same interface without touching the engine,
-  the index, or the UI. What it still cannot express is written up in
-  `docs/hardware-seam.md`.
+  the index, or the UI. It carries link state, device-side sample indices,
+  per-block quality and a measured sample rate. What it still cannot express is
+  written up in `docs/hardware-seam.md`.
+- `DemoControls` — the simulator's levers, held separately so `KoreSession` can
+  hold an `EegSource` rather than a `SimulatedEegSource`. A real source returns
+  null and the demo panel is not built at all.
 - `DspEngine` — two implementations, Dart reference + native C++.
 - Acquisition (256 Hz) is decoupled from repaint (4 Hz).
 
 **Repo layout:**
 ```
 lib/dsp/       filters, Goertzel, band power, the index, prediction, profile
-lib/sources/   EegSource seam + simulated generator
-lib/session/   pipeline wiring, reset history, daily rollup, demo controls
+lib/sources/   EegSource seam, link state, demo controls, simulated generator
+lib/session/   pipeline wiring, reset history, daily rollup, quality gate
 lib/services/  EEG stream types + on-disk history store
 lib/theme/     design tokens: primitives, colours, metrics, components
-lib/widgets/   gauge, sparkline, reset protocol, check-in, recovery
-lib/app/       the dashboard shell and its three responsive layouts
-cpp/           native DSP (C++/FFI), built into the Windows bundle
-test/          235 tests
+lib/widgets/   gauge, sparkline, reset protocol, check-in, recovery, diagram
+lib/app/       launch gate, welcome, pairing, dashboard, trend, history
+cpp/           native DSP (C++/FFI), built into the Windows and Android bundles
+test/          313 tests
 docs/          product narrative, positioning, design specs, hardware seam
 landing-page/  static marketing site (Netlify)
 tool/          cli_probe.dart, for tuning the index offline
 ```
 
 Stack: Flutter/Dart, zero plugins, bundled fonts. Targets present: `windows/`
-(builds and runs), `android/` (scaffold only, needs SDK + NDK). No `web/`.
+and `android/`, both building and running. No `web/`.
 
 ## What is NOT built
 
 - BLE / real hardware. The seam exists; nothing speaks to a device.
-- Android build.
+- **Any platform code at all.** No notification tier, no screen-wake during a
+  reset, no BLE — all three need an in-repo platform channel (never a pub
+  package; the reasoning is in `docs/hardware-seam.md`), and none has been
+  written. The notification is the most-used surface on a phone and it is still
+  designed-only.
 - Any server, account system, sync, or cloud inference.
 - Real recovery physiology — `applyResetRecovery()` decays the synthetic load,
   so the measured uplift is arithmetic over a simulation.
@@ -204,7 +254,17 @@ Stack: Flutter/Dart, zero plugins, bundled fonts. Targets present: `windows/`
   four-electrode patch will need per-channel reports and a combining rule.
 - **A stall watchdog.** If a source stops emitting *and* says nothing, quality
   holds its last value. `qualityUpdates` is the seam a real source reports its
-  own stall through.
+  own stall through, and `SourceLink.reconnecting` is what it should be saying.
+- **A configurable sample rate in the DSP.** The source measures and reports
+  its real rate and the quality path bands drift as degraded and unusable, but
+  `DspConfig.sampleRateHz` is still a compile-time 256.0 — so a drifting
+  crystal is currently *detected* rather than *accommodated*.
+- **`strainSince`**, the timestamp the current strain episode latched. The
+  notification copy is specified as "Load 78 for the last 6 minutes" and there
+  is nothing to compute that from.
+- **An index series per reset.** The history screen can say what a reset moved
+  but not draw the shape of it: the trajectory lives only in a 120-second
+  in-memory ring.
 
 ## What KORE becomes
 

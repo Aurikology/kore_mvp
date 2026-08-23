@@ -169,14 +169,38 @@ simulated source otherwise, and the UI keeps saying which, out loud.
 
 ## Order of work
 
-1. Widen `EegSource` — link state, sample indices, quality, measured rate — and
-   implement all of it in `SimulatedEegSource`, including deliberate fault
-   injection. No hardware needed, and it is the part that will otherwise be
-   rushed under a deadline with a device on the desk.
-2. Give `LoadState` an unusable-signal value and teach the index and
-   `FocusCrashPredictor` to go quiet in it, tested against injected faults.
+1. ~~Widen `EegSource`~~ — **done.** `SampleBlock` carries a device-side
+   `firstSampleIndex` and its own quality report; `effectiveSampleRateHz` is
+   measured rather than nominal; `SourceLink` publishes scanning, connecting,
+   streaming, reconnecting and failed, with the patch identity and battery on
+   it. `SimulatedEegSource` implements all of it and injects every fault it
+   describes: degrading contact per pad, a detached pad, lost samples, a
+   drifting crystal, and a dropped radio.
+
+   One thing came out of this that was not in the sketch above.
+   `KoreSession` was typed against `SimulatedEegSource`, so the seam that is
+   supposed to make hardware a drop-in was one the session reached straight
+   past. The simulator's levers now sit behind `DemoControls`, which a real
+   source does not offer — and which is also why the demo panel disappears on
+   a device rather than being hidden behind a flag.
+
+2. ~~Give `LoadState` an unusable-signal value~~ — **done differently, and the
+   difference is the interesting part.** A fourth `LoadState` would have made
+   "the signal is bad" a state of the *index*, and it is not: the index is a
+   reading, and whether the reading can be believed is a property of the
+   signal underneath it. `SignalQuality` and `SignalQualityGate` carry it
+   instead, and each consumer applies its own policy — the index holds its
+   last value flagged, strain is *withdrawn*, the sparkline and the profile
+   take nothing at all. Those are four different right answers, and one enum
+   value could only have expressed one of them. See `docs/signal-quality.md`.
+
 3. Make `DspEngine` take its sample rate rather than reading a constant, and
-   keep the Dart and C++ paths at parity while doing it.
+   keep the Dart and C++ paths at parity while doing it. **Still open.** The
+   source measures and reports its rate, and the quality path already bands
+   drift as degraded and unusable — but the engine is still built against the
+   256.0 Hz constant, so a real crystal is currently *detected* rather than
+   *accommodated*.
+
 4. Only then, the radio.
 
 Steps 1 to 3 are entirely app-side, are testable today, and are the difference

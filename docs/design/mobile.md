@@ -84,7 +84,7 @@ free, where a bottom bar costs a permanent choice on every screen.
 
 ## Screens
 
-### Welcome — designed, not built
+### Welcome — built
 
 Three lines and a button. Its only job is to set the claim boundary before the
 first reading appears, because that boundary is the product's credibility:
@@ -96,7 +96,7 @@ first reading appears, because that boundary is the product's credibility:
 No carousel, no permissions requested yet, no account. Asking for anything
 before the user has seen a reading is asking them to trust an empty box.
 
-### Pair — designed, not built
+### Pair — built
 
 Three states in one screen, never three screens:
 
@@ -109,8 +109,23 @@ Three states in one screen, never three screens:
 The contact check is the one that matters and the one hardware demos always
 skip. A poor electrode produces a *plausible* index rather than an obviously
 broken one, and a plausible wrong number is worse than no number. This screen
-is the honesty rule applied to hardware, and it needs data the session layer
-does not currently expose — see the gaps below.
+is the honesty rule applied to hardware.
+
+Built against `SourceLink` and the per-pad contact report. Three details are
+the screen rather than decoration: Continue is disabled until every *measurable*
+pad is seated, the line under it names the pad rather than describing the
+fault, and an unmeasurable pad reads "Not measured" and blocks nothing — it is
+not evidence of a fault and not evidence of health. The placement diagram
+guesses geometry from the pad's id, which is a drawing decision and is allowed
+to be wrong in a way a measurement is not; nothing in the model carries
+electrode positions, because coordinates on `ElectrodeContact` would commit the
+repo to a montage by accident.
+
+With no radio yet it pairs with the simulated patch, which says so in its own
+name. The scan and connect delays live at the composition root rather than in
+the source: everywhere else the simulated patch connects instantly, which is
+what keeps the test suite free of pumping, and a scan that resolves in one
+frame cannot be cancelled and reads as a mock-up.
 
 ### Calibrate
 
@@ -226,7 +241,7 @@ On `expanded` the card lands in the right-hand column with the rest of the
 detail list, so a desktop window shows both time scales in one glance and the
 screen is a convenience rather than the only way to see a month.
 
-### History — designed, not built
+### History — built
 
 Reached from the recovery card, not from a tab bar. Two destinations do not
 justify a bottom navigation bar; a tap target on the thing you are already
@@ -238,9 +253,14 @@ resets present but greyed. Abandonment is a retention signal and hiding it
 would flatter the numbers — the same reason the session layer keeps those
 records.
 
-The data for this exists today: `ResetHistory.records` is public and already
-persisted. What is missing is the *index* series behind it, which lives only
-in a 120-second in-memory ring.
+The drop is uncoloured in both directions. The check-in sheet states a rise in
+exactly the same secondary text as a fall, and a history that painted the good
+ones green would be grading the user rather than reporting the measurement —
+the sign carries it.
+
+Still missing is the *index series* behind each reset, which lives only in a
+120-second in-memory ring, so a chip can say what the reset moved but not draw
+the shape of it.
 
 ## What "glanceable" means here
 
@@ -255,7 +275,9 @@ in sunlight, by someone not wearing their glasses. Concretely:
 - Nothing on the screen animates except the gauge easing between frames.
 
 **The tier above the app.** On a phone the most-used surface is one KORE does
-not draw: the notification. Designed, not built, and the format is fixed:
+not draw: the notification. Still designed, not built — it needs an in-repo
+platform channel, and the copy below needs `strainSince`, which the session
+layer does not yet expose. Designed, not built, and the format is fixed:
 
 > **KORE** · Load 78 for the last 6 minutes
 > [ Reset ]   [ Not now ]
@@ -269,13 +291,17 @@ suppresses for the rest of the episode, not for ten minutes.
 None of these are reachable from `lib/widgets/` and none should be faked
 there. In rough order of how much the mobile design depends on them:
 
-1. **Electrode contact quality**, per channel, as a live value. Without it the
-   pairing screen cannot exist and the dashboard has no honest way to
-   distinguish a calm reading from a detached electrode. This is the one that
-   blocks the most.
-2. **Connection state and battery** as a typed value rather than
-   `sourceLabel`'s free-text string. The dashboard currently cannot say "the
-   patch is not connected" as distinct from "your load is 0".
+1. ~~**Electrode contact quality**, per channel, as a live value.~~ Delivered.
+   `SignalQuality.electrodes` carries one `ElectrodeContact` per pad, each
+   nullable on its own, and `KoreSession` exposes them along with
+   `allPadsSeated`. The pairing screen is built on it.
+2. ~~**Connection state and battery** as a typed value.~~ Delivered.
+   `SourceLink` carries the state, the patch identity and the battery, with a
+   `linkUpdates` stream alongside a synchronous getter — the same pair as
+   `quality`/`qualityUpdates`, and for a sharper version of the same reason: a
+   link that is scanning produces no blocks at all, so every state on the way
+   to `streaming` is unobservable from the sample stream. Battery is nullable;
+   a device that cannot report one says so rather than showing full.
 3. **Today's rollup, before it is written.** `DailyLoadLog` now carries one
    entry per measured day and the trend view renders it — but `dailyLoad`
    excludes whatever the current session has measured since the last write, and
@@ -303,10 +329,17 @@ there. In rough order of how much the mobile design depends on them:
 4. **`strainSince`** — the timestamp the current strain episode latched. The
    notification copy above says "for the last 6 minutes" and there is nothing
    to compute that from; `LoadState.strain` is a boolean-shaped fact.
-5. **Backgrounding and gaps.** `start()` assumes a stream that never stops. On
-   a phone the app is suspended constantly, and the index needs to be able to
-   say "I was not measuring between 14:10 and 14:35" rather than presenting a
-   continuous line it did not observe.
+5. ~~**Backgrounding and gaps.**~~ Delivered. `KoreSession.pause()` and
+   `resume()` are driven from the dashboard's lifecycle observer. A gap longer
+   than one analysis window clears the engine ring and the predictor
+   trajectory, requires a full clean window before a frame is believed again,
+   and puts a **hole** in the sparkline rather than a line across minutes
+   nobody measured. A gap shorter than one window is left alone: every refusal
+   costs a two-second settle, and a phone flickering in and out of the
+   background would spend its life settling.
+
+   What is still missing is the *record* of the gap beyond the live ring — the
+   daily rollup has no way to say a day was half-observed.
 6. **`baselineCapturedAt`** and a validity window. A baseline captured
    yesterday, before the patch was re-seated, is not today's baseline, and the
    calibration state has no way to know it is stale.
@@ -314,6 +347,9 @@ there. In rough order of how much the mobile design depends on them:
    moment there are two, "reset effectiveness" stops being comparable across
    records unless each record says which one it was.
 
-Items 1 and 2 are the ones that turn the dashboard from an honest desktop
-prototype into an honest phone app. The rest are what turn it into a product
-someone keeps for a term.
+Items 1, 2 and 5 are done, which is what turned the dashboard from an honest
+desktop prototype into an honest phone app. The rest — today's bar before it is
+written, `strainSince`, `baselineCapturedAt`, a protocol id on `ResetRecord` —
+are what turn it into a product someone keeps for a term. `strainSince` is the
+one the notification tier waits on, and the notification tier waits on platform
+code the project has not taken yet.
