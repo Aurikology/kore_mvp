@@ -1,5 +1,7 @@
 import '../services/eeg_data_stream.dart';
 import '../services/signal_quality.dart';
+import 'demo_controls.dart';
+import 'source_link.dart';
 
 /// A source of EEG samples.
 ///
@@ -35,6 +37,25 @@ abstract class EegSource {
   /// it is why this stream exists alongside it.
   Stream<SignalQuality> get qualityUpdates;
 
+  /// The link as it stands, readable synchronously.
+  ///
+  /// Same shape as [quality], and for the same reason: a screen painting now
+  /// needs an answer now.
+  SourceLink get link;
+
+  /// The link as it changes.
+  ///
+  /// Alongside a synchronous getter rather than instead of it, exactly as
+  /// [qualityUpdates] sits alongside [quality] - and for a sharper version of
+  /// the same reason. A link that is scanning, connecting, or reconnecting is
+  /// producing no blocks at all, so every state on the way to `streaming` is
+  /// unobservable from the sample stream. The pairing screen is made entirely
+  /// of those states.
+  ///
+  /// [start] still means what it meant: acquisition is running when its future
+  /// completes. This stream is what the user is shown while it has not.
+  Stream<SourceLink> get linkUpdates;
+
   /// The rate the device is actually sampling at, measured rather than
   /// claimed. [samplingRateHz] is the nominal figure it was built to.
   double get effectiveSampleRateHz;
@@ -44,6 +65,15 @@ abstract class EegSource {
   /// Label shown in the UI, e.g. "Simulated signal". A demo must never imply
   /// hardware that is not attached.
   String get label;
+
+  /// The simulator's levers, or null on a source that is measuring a real
+  /// head.
+  ///
+  /// Nullable rather than absent so `KoreSession` can hold an [EegSource]
+  /// instead of a `SimulatedEegSource` and still drive a demo - and so the
+  /// demo panel is off by construction wherever there is nothing to demo.
+  /// See [DemoControls].
+  DemoControls? get demo;
 
   Future<void> start();
 

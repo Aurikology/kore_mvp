@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../dsp/cognitive_load_index.dart';
 import '../services/history_store.dart';
 import '../session/kore_session.dart';
+import '../sources/source_link.dart';
 import '../theme/kore_theme.dart';
 import '../widgets/check_in_sheet.dart';
 import '../widgets/forecast_notice.dart';
@@ -284,8 +285,13 @@ class _HomePageState extends State<HomePage> {
         const SizedBox(height: KoreSpace.md),
         RecoveryCard(history: _session.resetHistory, today: today),
       ],
-      const SizedBox(height: KoreSpace.lg),
-      _demoControls(context),
+      // Only where there is something to simulate. On a real patch this is
+      // not a hidden panel or a debug flag - the source offers no levers, so
+      // there is nothing to build.
+      if (_session.hasDemoControls) ...[
+        const SizedBox(height: KoreSpace.lg),
+        _demoControls(context),
+      ],
     ];
   }
 
@@ -564,6 +570,15 @@ class _HomePageState extends State<HomePage> {
             OutlinedButton(
               onPressed: _session.simulateGoodContact,
               child: const Text('Restore contact'),
+            ),
+            // The electrode and the radio fail independently, and the app has
+            // to say which. A seated pad on a dropped link reports perfect
+            // contact and a number that stopped being true minutes ago.
+            OutlinedButton(
+              onPressed: _session.simulateLinkDrop,
+              child: Text(_session.linkState == SourceLinkState.reconnecting
+                  ? 'Reconnect patch'
+                  : 'Drop the link'),
             ),
           ],
         ),

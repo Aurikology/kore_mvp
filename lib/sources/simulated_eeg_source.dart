@@ -2,8 +2,10 @@ import 'dart:async';
 
 import '../services/eeg_data_stream.dart';
 import '../services/signal_quality.dart';
+import 'demo_controls.dart';
 import 'eeg_source.dart';
 import 'scenario_eeg_generator.dart';
+import 'source_link.dart';
 
 /// Drives [ScenarioEEGGenerator] on a wall clock and emits sample blocks.
 ///
@@ -19,13 +21,14 @@ import 'scenario_eeg_generator.dart';
 /// a detached electrode, lost blocks, a drifting crystal - because otherwise
 /// the handling for them gets written for the first time with a radio on the
 /// desk and a deadline. See `docs/signal-quality.md`.
-class SimulatedEegSource implements EegSource {
+class SimulatedEegSource implements EegSource, DemoControls {
   static const Duration _tick = Duration(milliseconds: 16);
 
   final ScenarioEEGGenerator generator;
 
   final _controller = StreamController<SampleBlock>.broadcast();
   final _qualityController = StreamController<SignalQuality>.broadcast();
+  final _linkController = StreamController<SourceLink>.broadcast();
   Timer? _timer;
   Stopwatch? _clock;
   int _lastElapsedMicros = 0;
@@ -60,6 +63,14 @@ class SimulatedEegSource implements EegSource {
 
   SignalQuality _quality = const SignalQuality.pristine(256.0);
 
+  SourceLink _link = SourceLink.idle;
+
+  /// Set by [stop] so a connection sequence still in flight abandons itself
+  /// instead of arriving after the user has cancelled it. Only reachable when
+  /// the scan and connect delays are non-zero; with the defaults there is no
+  /// window to cancel in, which is itself the point of the defaults.
+  bool _stopRequested = false;
+
   /// Microseconds since [start], as a function so it can be replaced.
   ///
   /// The default reads a real [Stopwatch], which is the whole point of this
@@ -90,11 +101,38 @@ class SimulatedEegSource implements EegSource {
   /// gets committed to by accident.
   final Map<String, String> padLabels;
 
+  /// How long the simulated patch spends looking for itself, and connecting.
+  ///
+  /// Both default to zero, and that default is load-bearing: at zero the
+  /// sequence runs with no timer at all, so [start] stays exactly as prompt as
+  /// it was before there was a link to establish, and no existing test has to
+  /// learn to pump for it. The pairing screen constructs a source with real
+  /// durations, because a scan that resolves in one frame cannot be cancelled
+  /// and reads as a fake.
+  final Duration scanDuration;
+  final Duration connectDuration;
+
+  /// What the patch calls itself once found.
+  ///
+  /// Says "simulated" out loud, and that is not decoration: a pairing screen
+  /// is the easiest surface in the product on which to imply hardware that is
+  /// not attached, which is the one thing the demo rules forbid.
+  final String patchName;
+
+  /// Battery for the simulated patch, or null for a device that does not
+  /// report one. Nullable so the unmeasured case is reachable in a test rather
+  /// than only in the field, the same way an unmeasurable pad is.
+  final int? batteryPercent;
+
   SimulatedEegSource({
     ScenarioEEGGenerator? generator,
     this.autoTimeline = true,
     int Function()? elapsedMicros,
     Map<String, String>? padLabels,
+    this.scanDuration = Duration.zero,
+    this.connectDuration = Duration.zero,
+    this.patchName = 'Simulated patch',
+    this.batteryPercent = 87,
   })  : generator = generator ?? ScenarioEEGGenerator(),
         padLabels = padLabels ??
             const {'left': 'Left pad', 'right': 'Right pad'},
@@ -118,6 +156,15 @@ class SimulatedEegSource implements EegSource {
   SignalQuality get quality => _quality;
 
   @override
+  Stream<SourceLink> get linkUpdates => _linkController.stream;
+
+  @override
+  SourceLink get link => _link;
+
+  PatchIdentity get _identity =>
+      PatchIdentity(name: patchName, batteryPercent: batteryPercent);
+
+  @override
   double get effectiveSampleRateHz =>
       generator.sampleRateHz * (1 + _rateErrorFraction);
 
@@ -129,12 +176,58 @@ class SimulatedEegSource implements EegSource {
 
   double get elapsedSeconds => generator.elapsedSeconds;
 
+  /// This source *is* the demo. A real one returns null here and the panel
+  /// stops being built at all.
+  @override
+  DemoControls get demo => this;
+
+  @override
+  bool get followingTimeline => autoTimeline;
+
+  @override
+  double get load => generator.load;
+
   @override
   Future<void> start() async {
     if (_timer != null) return;
+    _stopRequested = false;
+    await _establishLink();
+    if (!_link.isLive) return;
     if (_injectedElapsedMicros == null) _clock = Stopwatch()..start();
     _lastElapsedMicros = 0;
     _timer = Timer.periodic(_tick, (_) => _pump());
+  }
+
+  /// Walk the states a radio walks, at whatever pace was asked for.
+  ///
+  /// The awaits are skipped entirely when a duration is zero rather than
+  /// awaiting `Duration.zero`, which would still schedule a timer and would
+  /// still need pumping under fake time. Every transition is published either
+  /// way, so a listener sees the same sequence whether it took a second or no
+  /// time at all.
+  Future<void> _establishLink() async {
+    _publishLink(const SourceLink(state: SourceLinkState.scanning));
+    if (scanDuration > Duration.zero) await Future.delayed(scanDuration);
+    if (_stopRequested) return _publishLink(SourceLink.idle);
+
+    _publishLink(
+        SourceLink(state: SourceLinkState.connecting, patch: _identity));
+    if (connectDuration > Duration.zero) await Future.delayed(connectDuration);
+    if (_stopRequested) return _publishLink(SourceLink.idle);
+
+    _publishLink(
+        SourceLink(state: SourceLinkState.streaming, patch: _identity));
+  }
+
+  /// Emits only on a change, matching [_publishQuality]. A pairing screen
+  /// rebuilding on a value identical to the one it is already showing is a
+  /// repaint that tells the user nothing.
+  void _publishLink(SourceLink next) {
+    final changed = next.state != _link.state ||
+        next.patch?.name != _link.patch?.name ||
+        next.failure != _link.failure;
+    _link = next;
+    if (changed && !_linkController.isClosed) _linkController.add(next);
   }
 
   void _pump() {
@@ -164,6 +257,21 @@ class SimulatedEegSource implements EegSource {
             (c + entry.value * deltaSeconds).clamp(0.0, 1.0);
       }
       _syncGeneratorContact();
+    }
+
+    // An outage is not silence. The device carries on sampling into a radio
+    // nobody is listening to, so the samples are taken and discarded and the
+    // device index moves by all of them - which is what lets the gap be
+    // computed on reconnect instead of spliced out. A real source cannot even
+    // report this much while the link is down; the quality stream exists for
+    // exactly that, and this is a simulator, so it says so every tick.
+    if (!_link.isLive) {
+      for (var i = 0; i < n; i++) {
+        generator.nextSampleMicrovolts();
+      }
+      _deviceSampleIndex += n;
+      _publishQuality(_report(n));
+      return;
     }
 
     // Dropped samples are generated and thrown away rather than skipped. The
@@ -308,6 +416,7 @@ class SimulatedEegSource implements EegSource {
   }
 
   /// Manual demo control. Takes the timeline out of the loop.
+  @override
   void setLoadTarget(double target, {double? tauSeconds}) {
     autoTimeline = false;
     generator.loadTarget = target.clamp(0.0, 1.0);
@@ -316,6 +425,7 @@ class SimulatedEegSource implements EegSource {
 
   /// Called when a reset protocol completes: load falls away over the
   /// following seconds, so recovery is visible rather than instantaneous.
+  @override
   void applyResetRecovery() => setLoadTarget(0.15, tauSeconds: 12.0);
 
   // --- Fault injection ----------------------------------------------------
@@ -329,6 +439,7 @@ class SimulatedEegSource implements EegSource {
   ///
   /// Whole-patch rather than per-pad, so the scripted demo and every test
   /// written before pads existed keep meaning what they meant.
+  @override
   void setContact(double contact) {
     _padSlopes.clear();
     for (final id in padLabels.keys) {
@@ -370,12 +481,14 @@ class SimulatedEegSource implements EegSource {
   }
 
   /// Every pad comes off. Not silence - see [ScenarioEEGGenerator.contact].
+  @override
   void detachElectrode() => setContact(0.0);
 
   /// One pad comes off.
   void detachPad(String id) => setPadContact(id, 0.0);
 
   /// Back on the head and seated properly, every pad.
+  @override
   void restoreContact() => setContact(1.0);
 
   void _requirePad(String id) {
@@ -385,9 +498,40 @@ class SimulatedEegSource implements EegSource {
     }
   }
 
+  /// The radio drops mid-session. Samples keep being taken and none arrive.
+  ///
+  /// Deliberately does not fail: a link that has dropped is trying to come
+  /// back, and the app's job in the meantime is to stop claiming the number on
+  /// screen is current. [failLink] is the other outcome.
+  @override
+  void dropLink() {
+    if (!_link.isLive) return;
+    _publishLink(
+        SourceLink(state: SourceLinkState.reconnecting, patch: _identity));
+  }
+
+  /// The radio comes back. Everything missed while it was gone arrives as a
+  /// gap, not as a splice.
+  @override
+  void restoreLink() {
+    if (_link.state != SourceLinkState.reconnecting) return;
+    _publishLink(
+        SourceLink(state: SourceLinkState.streaming, patch: _identity));
+  }
+
+  /// The link gives up, with a reason the user can act on.
+  void failLink([String reason = 'The patch went out of range']) {
+    _publishLink(SourceLink(
+      state: SourceLinkState.failed,
+      patch: _link.patch,
+      failure: reason,
+    ));
+  }
+
   /// Lose the next [count] samples the way a missed BLE notification does: the
   /// device still produces them, the app never sees them, and the sample index
   /// jumps by exactly the number that went missing.
+  @override
   void dropSamples(int count) => _dropsRemaining += count.clamp(0, 1 << 20);
 
   /// Run the device's clock off nominal by [fraction], e.g. 0.004 for 0.4%
@@ -399,16 +543,20 @@ class SimulatedEegSource implements EegSource {
 
   @override
   Future<void> stop() async {
+    _stopRequested = true;
     _timer?.cancel();
     _timer = null;
     _clock?.stop();
+    _publishLink(SourceLink.idle);
   }
 
   @override
   void dispose() {
+    _stopRequested = true;
     _timer?.cancel();
     _timer = null;
     _controller.close();
     _qualityController.close();
+    _linkController.close();
   }
 }

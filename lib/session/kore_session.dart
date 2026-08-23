@@ -11,7 +11,10 @@ import '../dsp/load_profile.dart';
 import '../services/eeg_data_stream.dart';
 import '../services/history_store.dart';
 import '../services/signal_quality.dart';
+import '../sources/demo_controls.dart';
+import '../sources/eeg_source.dart';
 import '../sources/simulated_eeg_source.dart';
+import '../sources/source_link.dart';
 import 'kore_history.dart';
 import 'reset_record.dart';
 import 'signal_quality_gate.dart';
@@ -26,7 +29,13 @@ class KoreSession extends ChangeNotifier {
   static const int historyLength = 480; // 120 s at 4 Hz
   static const Duration resetDuration = Duration(seconds: 60);
 
-  final SimulatedEegSource source;
+  /// The seam, held as the seam.
+  ///
+  /// This was `SimulatedEegSource` until the session needed to be honest about
+  /// what it depends on. Everything simulator-specific now goes through
+  /// [DemoControls], which a real source does not offer - so a BLE source
+  /// drops in here without a single change below this line.
+  final EegSource source;
   final DspEngine engine;
   final CognitiveLoadIndex index = CognitiveLoadIndex();
   final FocusCrashPredictor predictor = FocusCrashPredictor();
@@ -45,6 +54,7 @@ class KoreSession extends ChangeNotifier {
 
   StreamSubscription<SampleBlock>? _subscription;
   StreamSubscription<SignalQuality>? _qualitySubscription;
+  StreamSubscription<SourceLink>? _linkSubscription;
 
   bool _resetActive = false;
   int _resetSecondsRemaining = 0;
@@ -68,7 +78,7 @@ class KoreSession extends ChangeNotifier {
   double _daySum = 0;
   double _dayPeak = 0;
 
-  KoreSession({SimulatedEegSource? source, DspEngine? engine, this.store})
+  KoreSession({EegSource? source, DspEngine? engine, this.store})
       : source = source ?? SimulatedEegSource(),
         engine = engine ?? createDspEngine();
 
@@ -225,10 +235,33 @@ class KoreSession extends ChangeNotifier {
 
   String get sourceLabel => source.label;
 
-  bool get followingTimeline => source.autoTimeline;
+  /// Where the link to the device is, as one value.
+  ///
+  /// The dashboard could previously say "your load is 0" but not "the patch is
+  /// not connected"; [sourceLabel] is a fixed string and says nothing about
+  /// whether anything is on the other end of it.
+  SourceLink get link => source.link;
+
+  SourceLinkState get linkState => source.link.state;
+
+  /// What is on the other end, once something is. Null while scanning.
+  PatchIdentity? get patch => source.link.patch;
+
+  /// Whether samples are arriving right now. Distinct from [isReadingTrustworthy]:
+  /// this is about the radio, that is about the electrode, and a session can
+  /// fail either independently.
+  bool get isLinkLive => source.link.isLive;
+
+  /// The simulator's levers, or null when there is nothing to simulate.
+  /// The demo panel is built off this and disappears without it.
+  DemoControls? get demo => source.demo;
+
+  bool get hasDemoControls => source.demo != null;
+
+  bool get followingTimeline => source.demo?.followingTimeline ?? false;
 
   /// Simulated load level, surfaced only for the demo control row.
-  double get simulatedLoad => source.generator.load;
+  double get simulatedLoad => source.demo?.load ?? 0;
 
   // --- Lifecycle ----------------------------------------------------------
 
@@ -251,8 +284,14 @@ class KoreSession extends ChangeNotifier {
     // consumer that only learned quality from arriving samples would hold a
     // stale "good" for as long as the silence lasted.
     _qualitySubscription = source.qualityUpdates.listen(_onQuality);
+    // And separately again from quality, because the two fail independently:
+    // a seated electrode on a radio that has dropped reports perfect contact
+    // right up until it reports nothing at all.
+    _linkSubscription = source.linkUpdates.listen(_onLink);
     await source.start();
   }
+
+  void _onLink(SourceLink link) => notifyListeners();
 
   void _onQuality(SignalQuality quality) {
     signalGate.observeQuality(quality);
@@ -345,7 +384,9 @@ class KoreSession extends ChangeNotifier {
         : null;
     _resetSignalClean = true;
     _loadBefore = index.value;
-    source.applyResetRecovery();
+    // Null on real hardware, where recovery is the user's head doing the work
+    // rather than the app arranging it. See [DemoControls.applyResetRecovery].
+    source.demo?.applyResetRecovery();
 
     _resetTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       _resetSecondsRemaining--;
@@ -454,12 +495,12 @@ class KoreSession extends ChangeNotifier {
   /// Demo control: drive the simulation directly rather than waiting on the
   /// scripted timeline. Being able to do this is what makes a live demo safe.
   void simulateStrain() {
-    source.setLoadTarget(0.92, tauSeconds: 3.0);
+    demo?.setLoadTarget(0.92, tauSeconds: 3.0);
     notifyListeners();
   }
 
   void simulateCalm() {
-    source.setLoadTarget(0.15, tauSeconds: 3.0);
+    demo?.setLoadTarget(0.15, tauSeconds: 3.0);
     notifyListeners();
   }
 
@@ -470,23 +511,36 @@ class KoreSession extends ChangeNotifier {
   /// strain and the app offers a breathing protocol to somebody whose headband
   /// has come off. With it, the reading stops.
   void simulatePoorContact() {
-    source.setContact(0.45);
+    demo?.setContact(0.45);
     notifyListeners();
   }
 
   void simulateDetachedElectrode() {
-    source.detachElectrode();
+    demo?.detachElectrode();
     notifyListeners();
   }
 
   void simulateGoodContact() {
-    source.restoreContact();
+    demo?.restoreContact();
     notifyListeners();
   }
 
   /// One second of samples lost, the way a missed BLE notification loses them.
   void simulateDropout({int samples = 256}) {
-    source.dropSamples(samples);
+    demo?.dropSamples(samples);
+    notifyListeners();
+  }
+
+  /// The radio drops, and comes back on the next call.
+  ///
+  /// The fault the dashboard has never been able to state: the electrode is
+  /// fine, the user is fine, and the number on screen is minutes old.
+  void simulateLinkDrop() {
+    if (linkState == SourceLinkState.reconnecting) {
+      demo?.restoreLink();
+    } else {
+      demo?.dropLink();
+    }
     notifyListeners();
   }
 
@@ -504,6 +558,7 @@ class KoreSession extends ChangeNotifier {
     _resetTimer?.cancel();
     _subscription?.cancel();
     _qualitySubscription?.cancel();
+    _linkSubscription?.cancel();
     source.dispose();
     engine.dispose();
     super.dispose();
