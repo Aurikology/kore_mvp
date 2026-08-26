@@ -30,10 +30,13 @@ else()
     # MSVC build outright - cl.exe rejects -O3 and -fPIC. Keep them here.
     # Likewise let the configuration pick the optimisation level.
     target_compile_options(kore_signal PRIVATE -Wall -Wextra)
-    # NOTE: no `target_link_libraries(... c++)`. That is an NDK/libc++ flag;
-    # MSVC links its runtime automatically and would fail looking for a
-    # library literally named "c++".
-    if(ANDROID)
-        target_link_libraries(kore_signal PRIVATE c++)
-    endif()
+    # NOTE: nothing links the C++ runtime by name here. Naming it `c++`
+    # resolves to whatever ANDROID_STL selects, which under NDK 28's default
+    # is the *shared* runtime - and `libc++_shared.so` is not packaged into
+    # the APK, so the library built, shipped, and then failed `dlopen` at
+    # every launch. The runtime is chosen once, in
+    # `android/app/build.gradle.kts`, as `c++_static`; the NDK toolchain links
+    # it from there and this file stays out of it. MSVC links its own runtime
+    # automatically and would fail looking for a library literally named
+    # "c++", which is why this was never in the MSVC branch.
 endif()
