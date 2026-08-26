@@ -275,16 +275,42 @@ in sunlight, by someone not wearing their glasses. Concretely:
 - Nothing on the screen animates except the gauge easing between frames.
 
 **The tier above the app.** On a phone the most-used surface is one KORE does
-not draw: the notification. Still designed, not built — it needs an in-repo
-platform channel, and the copy below needs `strainSince`, which the session
-layer does not yet expose. Designed, not built, and the format is fixed:
+not draw: the notification. **Built**, over the in-repo platform channel
+`docs/hardware-seam.md` argued for — `lib/services/kore_platform.dart` with a
+Kotlin host, no pub package, and an inert implementation on every platform that
+has no host, so the desktop build needs no conditionals. The rules live in
+`lib/session/strain_notifier.dart`, held apart from both the session and the
+widget tree: the session is a read model with no business knowing about
+banners, and a widget cannot own a rule whose whole subject is what happens
+while no widget is on screen. The format is fixed:
 
 > **KORE** · Load 78 for the last 6 minutes
 > [ Reset ]   [ Not now ]
 
 It states the measurement and the duration. It does not say "you seem
-stressed", does not use an emoji, and does not escalate if ignored. `Not now`
-suppresses for the rest of the episode, not for ten minutes.
+stressed", does not use an emoji, and does not escalate if ignored — one
+notification per episode, updated in place under a fixed id, posted at DEFAULT
+importance rather than HIGH because this states a reading and never alarms
+about one. `Not now` suppresses for the rest of the episode, not for ten
+minutes: a timed snooze would fire again into an episode the user has already
+declined, which is escalation wearing a politer name. The suppression lifts
+when the episode does, because the next episode is a new fact.
+
+It speaks only when the app is **not** in front. In the foreground the gauge is
+already stating the reading at arm's length, and a banner over it is the same
+fact twice. It comes down when the episode ends, when the user returns, and at
+the start of a reset rather than the end — gone from the shade while they
+breathing, not waiting there afterwards.
+
+**The boundary it sits behind.** `KoreSession.pause()` stops the source when
+the app is backgrounded, which is the honest thing for it to do. The
+consequence lands on this tier: nothing is measured in the background, so the
+only moment it can truthfully post is the transition into the background with
+an episode already live. A foreground service is the right answer the moment
+there is a radio for it to hold open — today it would keep a *simulator*
+running in the background and call the result a measurement. It drops in behind
+`StrainNotifier` without changing a single rule above; what changes is how
+often the tier has something new to say, not what it is allowed to say.
 
 ## What the session layer would need to expose
 
@@ -326,9 +352,16 @@ there. In rough order of how much the mobile design depends on them:
    goodness-of-fit, where the crash predictor returns an R² and uses it to stay
    quiet; the trend view has nothing equivalent to lean on, so it withholds a
    direction on magnitude alone.
-4. **`strainSince`** — the timestamp the current strain episode latched. The
-   notification copy above says "for the last 6 minutes" and there is nothing
-   to compute that from; `LoadState.strain` is a boolean-shaped fact.
+4. ~~**`strainSince`** — the timestamp the current strain episode latched.~~
+   Delivered, and delivered as a *duration* rather than a timestamp.
+   `CognitiveLoadIndex.strainFor` counts measured frames from the first frame
+   of the run that latched — so it includes the dwell rather than starting
+   five seconds late, and it can never report a duration spanning a stretch
+   nothing was measured. That is the reason not to store a timestamp:
+   subtracting one from now silently asserts the episode continued through
+   every minute since, including the minutes the app was suspended or the
+   electrode was off. An unusable frame withdraws the claim and the clock
+   together. It is the same rule the sparkline's hole exists for.
 5. ~~**Backgrounding and gaps.**~~ Delivered. `KoreSession.pause()` and
    `resume()` are driven from the dashboard's lifecycle observer. A gap longer
    than one analysis window clears the engine ring and the predictor
@@ -347,9 +380,14 @@ there. In rough order of how much the mobile design depends on them:
    moment there are two, "reset effectiveness" stops being comparable across
    records unless each record says which one it was.
 
-Items 1, 2 and 5 are done, which is what turned the dashboard from an honest
-desktop prototype into an honest phone app. The rest — today's bar before it is
-written, `strainSince`, `baselineCapturedAt`, a protocol id on `ResetRecord` —
-are what turn it into a product someone keeps for a term. `strainSince` is the
-one the notification tier waits on, and the notification tier waits on platform
-code the project has not taken yet.
+Items 1, 2, 4 and 5 are done, which is what turned the dashboard from an honest
+desktop prototype into an honest phone app, and then gave it a surface above
+itself. The rest — today's bar before it is written, `baselineCapturedAt`, a
+protocol id on `ResetRecord` — are what turn it into a product someone keeps
+for a term.
+
+The notification tier no longer waits on anything: the project took platform
+code, and `docs/hardware-seam.md` records what that turned on. The constraint
+was never *no platform code*, it was *no pub dependency*, and one in-repo
+`MethodChannel` satisfies both. BLE follows the same path, and it now follows a
+path something has already walked.

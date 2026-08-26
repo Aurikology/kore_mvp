@@ -23,8 +23,8 @@ simulated.**
 | Simulated EEG source | Implemented, with the link and every fault it can have |
 | Native C++/FFI DSP path | Implemented on Windows and Android; parity-tested against Dart |
 | Suspend and resume | Implemented; a gap is refused, never spliced |
-| BLE / real hardware | Not implemented (seam in place) |
-| Notifications, screen-wake | Not implemented; both need platform code |
+| BLE / real hardware | Not implemented (seam in place; the platform-code decision it waited on is taken) |
+| Notification tier, screen-wake | Implemented on Android, over an in-repo platform channel |
 | Post-reset check-in, streaks, persistence | Implemented, on-disk, no plugins |
 
 ## Running it
@@ -35,12 +35,14 @@ flutter run -d <android device>
 ```
 
 No Developer Mode or network connection required — the project has zero
-plugins and bundles its fonts. The Android build needs an SDK and, for the
+plugins and bundles its fonts. It is not plugin-free by accident: the one piece
+of platform code it does have (below) is an in-repo `MethodChannel`, which adds
+nothing to `pubspec.yaml` and nothing a host-VM test has to load. The Android build needs an SDK and, for the
 native DSP, an NDK; without the NDK it still builds and falls back to the Dart
 engine.
 
 ```bash
-flutter test                   # 313 tests, including the DSP assertions
+flutter test                   # 361 tests, including the DSP assertions
 dart run tool/cli_probe.dart   # sweep load levels and print the index curve
 ```
 
@@ -126,6 +128,47 @@ The uplift being measured is currently a simulated one — `applyResetRecovery()
 decays the synthetic load. The arithmetic is real; the physiology behind it
 waits on hardware.
 
+**6. The tier above the app.** On a phone the most-used surface is one KORE
+does not draw. When the app goes into the background during a strain episode it
+posts one notification, and the copy is the whole design:
+
+```
+KORE — Load 78 for the last 6 minutes
+[ Reset ]   [ Not now ]
+```
+
+It states the measurement and the duration. It does not say "you seem
+stressed", carries no emoji, and posts at DEFAULT importance rather than HIGH
+— the same rule as the palette's missing alarm colour: KORE states a bad
+reading plainly and never alarms about it. One notification per episode,
+updated in place under a fixed id, so ignoring it is not punished with another.
+`Not now` suppresses for the rest of the *episode*, not for ten minutes; a
+timed snooze would fire again into an episode the user has already declined.
+The banner comes down when the episode ends, when the user returns to the app,
+and at the *start* of a reset rather than the end.
+
+The duration comes from `CognitiveLoadIndex.strainFor`, which counts measured
+frames from the first frame of the run that latched — so it includes the
+five-second dwell rather than starting late, and it can never report a duration
+spanning a stretch nothing was measured. That is why it is a duration and not
+the `strainSince` timestamp originally specified: subtracting a timestamp from
+now asserts the episode continued through every minute since, including the
+ones the app was suspended for or the electrode was off through. An unusable
+frame withdraws the claim and the clock together.
+
+`setKeepScreenOn` is the other half, and the smaller fix for the more obvious
+bug: the reset is 60 s of watching an animation without touching the screen,
+which outlasts the display timeout. Held for the protocol, released whether it
+completed or was abandoned.
+
+**What it cannot do yet.** `KoreSession.pause()` stops the source when the app
+is backgrounded, which is the honest response to an OS that has throttled the
+timers to nothing — so nothing is measured in the background, and the only
+moment this tier can truthfully post is the transition into it. A foreground
+service is the right answer the moment there is a radio for it to hold open;
+today it would keep a *simulator* running in the background and call the result
+a measurement. It drops in behind `StrainNotifier` without changing a rule.
+
 ## Architecture notes
 
 - `DspEngine` has two implementations. `DartDspEngine` is the reference;
@@ -138,6 +181,31 @@ waits on hardware.
   the index, or the UI.
 - Acquisition (256 Hz) is decoupled from repaint (4 Hz). Samples arrive in
   blocks; `KoreSession` notifies once per completed analysis frame.
+
+### The platform channel
+
+`lib/services/kore_platform.dart` is the first platform code the project has
+taken, and `docs/hardware-seam.md` makes the call it rests on: the constraint
+is *no pub dependency*, not *no platform code*. One `MethodChannel`, a Kotlin
+host in `android/app/src/main/kotlin/`, nothing added to `pubspec.yaml`.
+
+It was taken for the notification tier rather than for BLE on purpose — the
+shape is easier to get right where a failure costs one missing banner. Three
+properties BLE inherits:
+
+- `createKorePlatform()` is `createDspEngine()` in a different costume: try the
+  platform, return an inert implementation otherwise. `_InertPlatform`
+  implements every method as a *successful no-op* rather than throwing, which
+  is what keeps the Windows build free of platform conditionals entirely.
+- Every call is wrapped against `MissingPluginException`, because on a staged
+  rollout the Dart half can legitimately know a method the installed APK does
+  not implement. Normal condition, not an error.
+- Delivery is **pull, not push**, for anything that can arrive before the
+  engine exists. A notification button fires a `PendingIntent` that may create
+  the process, so the host queues the action and Dart drains it once its
+  handler is installed. A host that pushed at engine-attach would fire into a
+  channel with nothing listening. The BLE equivalent is a device that connected
+  while the app was dead.
 
 ### The native path
 
@@ -173,8 +241,8 @@ log line rather than the app.
 ```
 lib/dsp/       filters, Goertzel, band power, the index
 lib/sources/   EegSource seam, link state, demo controls, simulated generator
-lib/session/   pipeline wiring, reset history, quality gate, app state
-lib/services/  EEG stream types + on-disk history store
+lib/session/   pipeline wiring, reset history, quality gate, notification rules
+lib/services/  EEG stream types, on-disk history store, platform channel
 lib/app/       launch gate, welcome, pairing, dashboard, trend, history
 lib/widgets/   gauge, sparkline, reset protocol, check-in, recovery, patch diagram
 cpp/           native DSP (C++/FFI), built into the Windows bundle

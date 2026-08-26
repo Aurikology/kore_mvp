@@ -1,4 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- API 33+ only. Below it the OS grants posting by default, which is why
+         the host answers `requestNotificationPermission` with
+         `areNotificationsEnabled()` there rather than with a request. Declared
+         even so: the permission is harmless on older releases and its absence
+         on 33+ makes the request silently deny. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
         android:label="KORE"
         android:name="${applicationName}"
@@ -25,6 +31,13 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- `Not now`. A receiver rather than an activity because the whole
+             point of that button is that it does not raise the app; not
+             exported, so the only thing that can fire it is the PendingIntent
+             KORE itself attached to the banner. -->
+        <receiver
+            android:name=".NotificationActionReceiver"
+            android:exported="false"/>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

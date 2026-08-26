@@ -26,7 +26,7 @@ this phase, not a treatment, not a generic meditation app.
 
 A **Flutter app** running on Windows and Android. Real DSP, simulated
 electrode — the signal processing is genuine; only the EEG source is synthetic.
-There is no server, no accounts, no network. 313 tests pass.
+There is no server, no accounts, no network. 361 tests pass.
 
 **Signal chain** (`lib/dsp/`), 256 Hz microvolt samples:
 - One-pole DC blocker at 0.5 Hz.
@@ -96,6 +96,50 @@ streak, mean drop, mean clarity. Three deliberate rules: the check-in is only
 offered when the protocol ran to the end; resets before calibration finishes
 are not logged at all; the sheet states the measurement plainly, including when
 the index went **up**.
+
+**The notification tier** (`lib/services/kore_platform.dart`,
+`lib/session/strain_notifier.dart`). The first platform code the project has
+taken, and the thing `docs/hardware-seam.md` argued for: an in-repo
+`MethodChannel` with a Kotlin host, no pub package, nothing added to
+`pubspec.yaml`, nothing a host-VM test has to bind. Taken for a notification
+rather than for BLE deliberately — the shape is easier to get right where a
+failure costs one missing banner than where it costs a dropped EEG link.
+
+The copy is fixed: **`KORE — Load 78 for the last 6 minutes`**, with `Reset`
+and `Not now`. It states the measurement and the duration, carries no emoji,
+and posts at DEFAULT importance rather than HIGH — the same rule as the
+palette's missing alarm colour. One notification per episode, updated in place
+under a fixed id. `Not now` suppresses for the rest of the *episode*, never on
+a timer: a snooze would fire again into an episode the user has already
+declined, which is escalation wearing a politer name. It speaks only when the
+app is not in front, and comes down at the *start* of a reset rather than the
+end.
+
+Three properties BLE inherits. `createKorePlatform()` is `createDspEngine()` in
+a different costume — try the platform, return an inert implementation
+otherwise — and the inert one is a *successful no-op* rather than a throw, so
+the Windows build carries no platform conditionals at all. Every call is
+wrapped against `MissingPluginException`, because a Dart build newer than the
+installed APK is a normal condition rather than an error. And delivery is
+**pull, not push**: a notification button fires a `PendingIntent` that may
+create the process, so the host queues the action and Dart drains it once its
+handler exists. A host that pushed at engine-attach would fire into a channel
+with nothing listening; the BLE equivalent is a device that connected while the
+app was dead.
+
+**`strainFor`**, the duration the notification states, and deliberately a
+duration rather than the `strainSince` timestamp originally specified.
+`CognitiveLoadIndex` counts measured frames from the first frame of the run
+that latched — so it includes the five-second dwell rather than starting
+late, and it can never report a duration spanning a stretch nothing was
+measured. A timestamp subtracted from now asserts the episode continued through
+every minute since, including the ones the app was suspended for. An unusable
+frame withdraws the claim and the clock together. Same rule as the sparkline's
+hole.
+
+**Screen-wake during a reset.** 60 s of watching an animation without touching
+the screen outlasts the display timeout. Held for the protocol, released
+whether it completed or was abandoned — the flag is not one to leave set.
 
 **Persistence** — `%APPDATA%\KORE\history.json` (`~/.kore/history.json`
 elsewhere) is a versioned document carrying resets, the load profile, and a
@@ -219,29 +263,36 @@ refusal costs a two-second settle.
 ```
 lib/dsp/       filters, Goertzel, band power, the index, prediction, profile
 lib/sources/   EegSource seam, link state, demo controls, simulated generator
-lib/session/   pipeline wiring, reset history, daily rollup, quality gate
-lib/services/  EEG stream types + on-disk history store
+lib/session/   pipeline wiring, reset history, daily rollup, quality gate,
+               notification rules
+lib/services/  EEG stream types, on-disk history store, platform channel
 lib/theme/     design tokens: primitives, colours, metrics, components
 lib/widgets/   gauge, sparkline, reset protocol, check-in, recovery, diagram
 lib/app/       launch gate, welcome, pairing, dashboard, trend, history
 cpp/           native DSP (C++/FFI), built into the Windows and Android bundles
-test/          313 tests
+android/       Kotlin host for the platform channel (notifications, screen-wake)
+test/          361 tests
 docs/          product narrative, positioning, design specs, hardware seam
 landing-page/  static marketing site (Netlify)
 tool/          cli_probe.dart, for tuning the index offline
 ```
 
-Stack: Flutter/Dart, zero plugins, bundled fonts. Targets present: `windows/`
+Stack: Flutter/Dart, zero pub plugins, bundled fonts, one in-repo platform
+channel. Targets present: `windows/`
 and `android/`, both building and running. No `web/`.
 
 ## What is NOT built
 
-- BLE / real hardware. The seam exists; nothing speaks to a device.
-- **Any platform code at all.** No notification tier, no screen-wake during a
-  reset, no BLE — all three need an in-repo platform channel (never a pub
-  package; the reasoning is in `docs/hardware-seam.md`), and none has been
-  written. The notification is the most-used surface on a phone and it is still
-  designed-only.
+- BLE / real hardware. The seam exists; nothing speaks to a device. The
+  platform-code *decision* it waited on is no longer open — the notification
+  tier above is an in-repo `MethodChannel` with a Kotlin host — but the radio
+  itself is unwritten.
+- **Measurement in the background.** `KoreSession.pause()` stops the source
+  when the app is backgrounded, so nothing is measured there and the
+  notification tier can only truthfully post at the transition into it. A
+  foreground service is the answer once there is a radio to hold open; today it
+  would keep a *simulator* running in the background and call the result a
+  measurement. It drops in behind `StrainNotifier` without changing a rule.
 - Any server, account system, sync, or cloud inference.
 - Real recovery physiology — `applyResetRecovery()` decays the synthetic load,
   so the measured uplift is arithmetic over a simulation.
@@ -259,9 +310,6 @@ and `android/`, both building and running. No `web/`.
   its real rate and the quality path bands drift as degraded and unusable, but
   `DspConfig.sampleRateHz` is still a compile-time 256.0 — so a drifting
   crystal is currently *detected* rather than *accommodated*.
-- **`strainSince`**, the timestamp the current strain episode latched. The
-  notification copy is specified as "Load 78 for the last 6 minutes" and there
-  is nothing to compute that from.
 - **An index series per reset.** The history screen can say what a reset moved
   but not draw the shape of it: the trajectory lives only in a 120-second
   in-memory ring.
@@ -272,9 +320,12 @@ A non-invasive neurotechnology platform: a **wearable EEG patch** paired with a
 **mobile app**, with AI inference for prediction and personalization.
 
 - **Hardware.** EEG (and eventually tACS) patch doing edge sensing, streaming
-  over BLE into the existing `EegSource` seam. The dependency call: the
-  constraint is *no pub dependency*, not *no platform code* — an in-repo
-  platform channel, never a pub BLE package.
+  over BLE into the existing `EegSource` seam. The dependency call is made and
+  now has a working instance: the constraint is *no pub dependency*, not *no
+  platform code* — an in-repo platform channel, never a pub BLE package. The
+  notification tier walked that path first, so BLE inherits the fallback shape,
+  the `MissingPluginException` handling, and the pull-not-push delivery rule
+  rather than rediscovering them with a radio attached.
 - **Mobile.** Phone becomes the primary surface; desktop stays as the
   development and demo surface. The flow and screen inventory are designed in
   `docs/design/mobile.md`. On a phone the inversion matters: the patch tells

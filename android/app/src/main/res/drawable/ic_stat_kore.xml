@@ -1,0 +1,18 @@
+<!-- The status-bar mark: the load gauge, reduced to a ring and its centre.
+
+     Its own file rather than @mipmap/ic_launcher. A small icon is drawn as an
+     alpha mask, so the launcher icon arrives as an undifferentiated white blob
+     at 24 dp - the one place the app is identified by shape alone is the place
+     the launcher icon has none. Vector rather than five PNG densities because
+     minSdk is 24 and RemoteViews has handled vector small icons since 24; the
+     colour below is irrelevant, only the coverage survives the mask. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M12,3 a9,9 0 1,0 0.01,0 z M12,5.8 a6.2,6.2 0 1,0 0.01,0 z M12,9.4 a2.6,2.6 0 1,0 0.01,0 z" />
+</vector>
