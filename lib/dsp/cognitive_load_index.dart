@@ -107,6 +107,7 @@ class CognitiveLoadIndex {
   double _lastR = 0;
   bool _hasCli = false;
   int _framesAboveEnter = 0;
+  int _strainFrames = 0;
   LoadState _state = LoadState.calibrating;
   SignalQualityLevel _quality = SignalQualityLevel.good;
 
@@ -194,6 +195,31 @@ class CognitiveLoadIndex {
   bool get isPersonalised =>
       _profile.indexFrames >= kFramesBeforePersonalising;
 
+  /// How long the current strain episode has been *measured*, or null when
+  /// there is no episode. Counted from the first frame of the run that
+  /// latched, so it includes the dwell rather than starting five seconds late
+  /// - the user was above their threshold for the whole of it.
+  ///
+  /// A duration of measured frames rather than a `strainSince` wall-clock
+  /// timestamp, and the difference is the whole point. A timestamp answers
+  /// "when did this start", and subtracting it from now silently asserts the
+  /// episode continued through every minute in between - including minutes the
+  /// app was suspended, the electrode was off, or the radio had dropped. This
+  /// counts only frames that were believed, so it can never claim strain
+  /// through a stretch nothing was measuring. It is the same rule the
+  /// sparkline's hole exists for.
+  ///
+  /// In practice an unmeasured stretch ends the episode outright - an unusable
+  /// signal withdraws the strain claim, and a resumed session arrives
+  /// contaminated - so the counter restarts rather than drifting. The
+  /// distinction still matters for what the number *means*: it is time spent
+  /// visibly in strain, and the notification says exactly that.
+  Duration? get strainFor => _state == LoadState.strain
+      ? Duration(
+          milliseconds:
+              (_strainFrames * 1000 / DspConfig.framesPerSecond).round())
+      : null;
+
   /// Feed one analysis frame. Call once per [BandPowers] produced.
   ///
   /// [quality] is the source's verdict on the samples this frame was built
@@ -230,6 +256,10 @@ class CognitiveLoadIndex {
       // costs the usual dwell once the signal is back.
       if (_state == LoadState.strain) _state = LoadState.steady;
       _framesAboveEnter = 0;
+      // The episode is withdrawn with the claim. Resuming the count after the
+      // signal comes back would report a duration spanning the outage, which
+      // is the one thing [strainFor] exists to never do.
+      _strainFrames = 0;
       return;
     }
 
@@ -292,17 +322,26 @@ class CognitiveLoadIndex {
       if (_cli < strainExit) {
         _state = LoadState.steady;
         _framesAboveEnter = 0;
+        _strainFrames = 0;
+      } else {
+        // Between exit and enter the episode continues: that band is the
+        // hysteresis, not a recovery.
+        _strainFrames++;
       }
       return;
     }
 
     if (_cli >= strainEnter) {
       _framesAboveEnter++;
+      // Counted from here, not from the latch, so the dwell is part of the
+      // episode. Dropping back below enter before it latches discards the run.
+      _strainFrames++;
       if (_framesAboveEnter >= kStrainDwellFrames) {
         _state = LoadState.strain;
       }
     } else {
       _framesAboveEnter = 0;
+      _strainFrames = 0;
     }
   }
 
@@ -317,6 +356,7 @@ class CognitiveLoadIndex {
     _baselineSamples.clear();
     _mu = null;
     _framesAboveEnter = 0;
+    _strainFrames = 0;
     _state = LoadState.calibrating;
   }
 

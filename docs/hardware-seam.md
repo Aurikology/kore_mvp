@@ -158,7 +158,32 @@ would be replacing.
 
 **An in-repo platform channel.** This is the answer, and it turns on a
 distinction worth being explicit about: the constraint is *no pub dependency*,
-not *no platform code*. A `MethodChannel`/`EventChannel` written inside this
+not *no platform code*.
+
+**This is no longer hypothetical.** `lib/services/kore_platform.dart` and its
+Kotlin host are the first instance, taken for the notification tier rather than
+for the radio - deliberately, because the shape is easier to get right where a
+failure costs one missing banner than where it costs a dropped EEG link. What
+it establishes, and what BLE inherits:
+
+- One `MethodChannel` in the repo, nothing in `pubspec.yaml`, no symlink
+  requirement, nothing a host-VM test has to bind. `flutter test` still runs
+  the whole suite with no Flutter binding beyond the framework's own.
+- `createKorePlatform()` is `createDspEngine()` in a different costume: try the
+  platform, return an inert implementation otherwise. `_InertPlatform`
+  implements every method as a successful no-op rather than throwing, so the
+  Windows build carries no conditionals at all - which is the property that
+  keeps a platform capability from leaking into five call sites.
+- Every call is wrapped against `MissingPluginException`, because on a staged
+  rollout the Dart half can legitimately know about a method the installed APK
+  does not implement. That is a *normal* condition, not an error, and it has to
+  degrade rather than take down the frame that called it.
+- Delivery is **pull, not push**, for anything that can arrive before the
+  engine exists. A notification button press fires a `PendingIntent` that can
+  create the process, so the host queues the action and Dart drains it once its
+  handler is installed. A host that pushed at engine-attach time would fire
+  into a channel with nothing listening. The BLE equivalent is a device that
+  connected while the app was dead. A `MethodChannel`/`EventChannel` written inside this
 repo — Kotlin on Android, WinRT over FFI or a small C++ shim on Windows — adds
 no package to `pubspec.yaml`, no symlink requirement, and nothing that a host-VM
 test has to load. `EegSource` is already the abstraction that keeps it out of
@@ -201,7 +226,11 @@ simulated source otherwise, and the UI keeps saying which, out loud.
    256.0 Hz constant, so a real crystal is currently *detected* rather than
    *accommodated*.
 
-4. Only then, the radio.
+4. Only then, the radio. The platform-code decision it depends on is
+   **taken**: `lib/services/kore_platform.dart` is an in-repo `MethodChannel`
+   with a Kotlin host, no pub package, and an inert fallback everywhere else.
+   What remains for BLE is the radio itself, not the argument about how to
+   reach it.
 
 Steps 1 to 3 are entirely app-side, are testable today, and are the difference
 between hardware being a drop-in and hardware being a rewrite — which is the

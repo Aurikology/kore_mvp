@@ -105,6 +105,16 @@ class KoreSession extends ChangeNotifier {
 
   LoadState get loadState => index.state;
 
+  /// How long the current strain episode has been *measured*, or null when
+  /// there is no episode.
+  ///
+  /// A duration rather than the `strainSince` timestamp the notification copy
+  /// was originally specified against, and the difference is deliberate:
+  /// subtracting a timestamp from now asserts the episode continued through
+  /// every minute since, including the ones this app was suspended for or the
+  /// electrode was off through. See [CognitiveLoadIndex.strainFor].
+  Duration? get strainFor => index.strainFor;
+
   bool get isCalibrated => index.isCalibrated;
 
   /// The near-future read on the same signal: is the index about to cross into

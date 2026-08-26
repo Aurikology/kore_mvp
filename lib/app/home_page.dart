@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../dsp/cognitive_load_index.dart';
 import '../services/history_store.dart';
 import '../session/kore_session.dart';
+import '../session/strain_notifier.dart';
 import '../sources/source_link.dart';
 import '../theme/kore_theme.dart';
 import '../widgets/check_in_sheet.dart';
@@ -45,11 +48,22 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   late final KoreSession _session;
   late final bool _ownsSession;
 
+  /// The tier above this screen. It owns when a notification exists; the
+  /// dashboard only tells it which side of the foreground the app is on, and
+  /// listens for the one action that has to land back here.
+  late final StrainNotifier _notifier;
+  StreamSubscription<void>? _resetRequests;
+
   @override
   void initState() {
     super.initState();
     _ownsSession = widget.session == null;
     _session = widget.session ?? KoreSession(store: widget.store);
+    _notifier = StrainNotifier(session: _session);
+    // Routed to the same entry point the on-screen button uses. A notification
+    // that started the protocol by a second path would be a second protocol
+    // as far as the check-in and the history are concerned.
+    _resetRequests = _notifier.resetRequests.listen((_) => _openFromNotification());
     WidgetsBinding.instance.addObserver(this);
     _session.start();
   }
@@ -57,8 +71,21 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _resetRequests?.cancel();
+    _notifier.dispose();
     if (_ownsSession) _session.dispose();
     super.dispose();
+  }
+
+  /// `Reset` pressed on the notification.
+  ///
+  /// The action can arrive while the app is still coming up from cold, or
+  /// while a protocol is already running - the notification was posted before
+  /// either was true. Both are dropped rather than queued: starting a second
+  /// protocol over a running one would file two records for one reset.
+  void _openFromNotification() {
+    if (!mounted || _session.resetActive) return;
+    unawaited(_openReset());
   }
 
   /// On a phone this fires constantly. The session decides what a gap costs;
@@ -70,7 +97,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       case AppLifecycleState.hidden:
       case AppLifecycleState.detached:
         _session.pause();
+        // After the pause, so the reading the notification carries is the last
+        // one measured rather than one taken mid-teardown.
+        _notifier.onBackgrounded();
       case AppLifecycleState.resumed:
+        _notifier.onForegrounded();
         _session.resume();
       case AppLifecycleState.inactive:
         // A notification shade pulled halfway down, a call arriving and being
