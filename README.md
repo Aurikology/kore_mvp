@@ -15,7 +15,7 @@ simulated.**
 | Area | State |
 |---|---|
 | DSP pipeline (filtering, band power, index) | Implemented, unit-tested |
-| Measured sample rate, end to end | Implemented; filters and every frame-counted duration follow the device's real crystal |
+| Measured sample rate, end to end | Implemented; filters and every frame-counted duration follow the device's real crystal, including one that cannot be reported until the link has streamed |
 | Live dashboard (gauge, trend, reset protocol) | Implemented |
 | Windows desktop build | Working |
 | Android build | Working, with the native DSP cross-compiled |
