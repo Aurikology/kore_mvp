@@ -22,7 +22,7 @@ SampleBlock _block(
         contact: contact,
         droppedSamples: dropped,
         measuredRateHz: 256,
-        nominalRateHz: 256,
+        referenceRateHz: 256,
       ),
     );
 
@@ -115,7 +115,7 @@ void main() {
     gate.observeQuality(const SignalQuality(
       contact: 0.0,
       measuredRateHz: 256,
-      nominalRateHz: 256,
+      referenceRateHz: 256,
     ));
     expect(gate.isUsable, isFalse);
     expect(gate.faults, contains(SignalFault.electrodeDetached));

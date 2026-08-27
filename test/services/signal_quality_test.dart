@@ -5,13 +5,13 @@ SignalQuality _q({
   double? contact = 1.0,
   int dropped = 0,
   double measuredRateHz = 256.0,
-  double nominalRateHz = 256.0,
+  double referenceRateHz = 256.0,
 }) =>
     SignalQuality(
       contact: contact,
       droppedSamples: dropped,
       measuredRateHz: measuredRateHz,
-      nominalRateHz: nominalRateHz,
+      referenceRateHz: referenceRateHz,
     );
 
 void main() {

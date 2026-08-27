@@ -219,12 +219,73 @@ simulated source otherwise, and the UI keeps saying which, out loud.
    take nothing at all. Those are four different right answers, and one enum
    value could only have expressed one of them. See `docs/signal-quality.md`.
 
-3. Make `DspEngine` take its sample rate rather than reading a constant, and
-   keep the Dart and C++ paths at parity while doing it. **Still open.** The
-   source measures and reports its rate, and the quality path already bands
-   drift as degraded and unusable — but the engine is still built against the
-   256.0 Hz constant, so a real crystal is currently *detected* rather than
-   *accommodated*.
+3. ~~Make `DspEngine` take its sample rate rather than reading a constant~~ —
+   **done**, and the C++ port turned out to need no change at all. The rate was
+   always a parameter of `kore_dsp_create`, which builds its DC blocker and its
+   notch from whatever it is handed; only the Dart half was passing it a
+   constant. Parity is now checked at 261.12 Hz as well as at 256, and it
+   passes against a DLL built before the change — which is the cleanest
+   evidence available that the native side was right all along.
+
+   `DspConfig` splits into geometry and rate. The window, the hop, the bin
+   edges and the mains notch stay static: they are design decisions, identical
+   on every device. The rate arrives from the source at runtime, and
+   `KoreSession` builds the engine, the index, the predictor and the quality
+   gate against that one answer, so nothing can be counting frames at 4 Hz
+   while the engine frames at 4.08.
+
+   Two things came out of this that were not in the sketch above.
+
+   **How much the notch was actually worth.** On a unit-amplitude 60 Hz mains
+   tone, an engine tuned to the real rate leaves 0.00019. One built against
+   256 Hz while the device samples at 261.12 leaves 0.53920 — over half the
+   mains survives a filter whose entire purpose is removing it. Even 0.5% of
+   rate error, ordinary for an uncompensated oscillator, lets a fifth through.
+   The estimate above called this "not small" and understated it.
+
+   **Accommodating a rate has to *retire* the fault for it.** This is the half
+   that makes the change do anything. The quality path banded drift against the
+   256 Hz constant, so a headset whose crystal steadily ran at 261.12 Hz
+   reported `sampleRateDrift` on every block, the gate refused every frame, and
+   it could never finish calibrating — a perfectly good device, permanently
+   unusable. Tuning the engine to it without also moving what drift is measured
+   against would have fixed the arithmetic and left the app just as broken.
+   `SignalQuality.nominalRateHz` is now `referenceRateHz`, meaning the rate the
+   analysis is tuned to; the source fills it with its own nominal, because that
+   is all it can know, and `SignalQualityGate` re-references it to the engine's
+   actual tuning. The gate is the only place both numbers exist, and
+   re-referencing is the same translation it already performs for the analysis
+   window.
+
+   What remains a fault, correctly, is the crystal moving *away* from the
+   tuning — a real detuning that grows with temperature.
+
+   **What this deliberately does not do: retune after construction.** The
+   engine is tuned once, when the session opens, and that leaves two things
+   open — both of which are properties of a radio that does not exist yet, and
+   this file's standing rule is not to build for one before it does.
+
+   The first is drift *during* a session: a crystal that warms up and walks off
+   its starting rate is detected and gated, not followed.
+
+   The second is sharper, and is the one to remember at step 4. Tuning at
+   construction assumes the source can report its rate *before it has
+   streamed*. `SimulatedEegSource` can, and so can any source that knows its
+   own crystal. A BLE source measuring its rate from packet arrival timestamps
+   cannot: it would report its nominal at construction and only learn the truth
+   some seconds in — by which point the engine is built, and the gate would
+   band the difference as drift and suppress every frame. That is the exact
+   failure this step removed, re-entering through the door the radio walks in
+   by. **A BLE `EegSource` must either report its crystal up front or the
+   session must retune when the link goes live.**
+
+   Both fixes are the same small change — rebuild the analysis stack and call
+   `SignalQualityGate.contaminate`, which already exists for precisely this
+   shape of discontinuity, because swapping IIR coefficients under live filter
+   state rings the same way a splice does. Retuning before calibration has
+   begun is free; retuning after it costs a baseline. That asymmetry is the
+   design question, and it should be answered against a radio that actually
+   warms up rather than against a simulator lever.
 
 4. Only then, the radio. The platform-code decision it depends on is
    **taken**: `lib/services/kore_platform.dart` is an in-repo `MethodChannel`
@@ -234,4 +295,5 @@ simulated source otherwise, and the UI keeps saying which, out loud.
 
 Steps 1 to 3 are entirely app-side, are testable today, and are the difference
 between hardware being a drop-in and hardware being a rewrite — which is the
-claim the seam exists to make true.
+claim the seam exists to make true. All three are now done, and nothing left
+on this list can be built without a radio.

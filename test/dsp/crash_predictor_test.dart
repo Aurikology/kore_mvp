@@ -7,7 +7,7 @@ import 'package:kore/dsp/dsp_engine.dart';
 import 'package:kore/dsp/focus_crash_predictor.dart';
 import 'package:kore/sources/scenario_eeg_generator.dart';
 
-const _fps = DspConfig.framesPerSecond;
+final _fps = DspConfig.nominal.framesPerSecond;
 
 /// Feed [frames] synthetic frames, with [index] and [deviation] given as
 /// functions of elapsed seconds so the trajectories below read as the shapes
@@ -233,7 +233,7 @@ void main() {
       expect(firstQualifying, isNotNull);
       expect(firstWarning, isNotNull);
       expect(firstWarning! - firstQualifying!,
-          FocusCrashPredictor.kConfirmFrames - 1,
+          FocusCrashPredictor.kNominalConfirmFrames - 1,
           reason: 'the criteria must hold for the dwell before it publishes');
     });
 

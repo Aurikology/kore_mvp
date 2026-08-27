@@ -334,7 +334,7 @@ class SimulatedEegSource implements EegSource, DemoControls {
       ],
       droppedSamples: droppedSamples,
       measuredRateHz: effectiveSampleRateHz,
-      nominalRateHz: generator.sampleRateHz,
+      referenceRateHz: generator.sampleRateHz,
     );
   }
 

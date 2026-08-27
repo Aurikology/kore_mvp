@@ -37,8 +37,17 @@ class KoreSession extends ChangeNotifier {
   /// drops in here without a single change below this line.
   final EegSource source;
   final DspEngine engine;
-  final CognitiveLoadIndex index = CognitiveLoadIndex();
-  final FocusCrashPredictor predictor = FocusCrashPredictor();
+  final CognitiveLoadIndex index;
+  final FocusCrashPredictor predictor;
+
+  /// What the analysis is tuned to, which is the rate [source] was measured to
+  /// be running at when this session was built - not the 256 Hz constant.
+  ///
+  /// One configuration, built once, and handed to all four of the things that
+  /// need it. They have to agree: an engine framing at 4.08 Hz feeding an
+  /// index counting dwell at 4 Hz is a five-second dwell that lasts 4.9 s, and
+  /// nothing in the app would ever have said so.
+  DspConfig get config => engine.config;
 
   /// Null means history lives in memory for this run only. The real store is
   /// wired at the composition root (`main`), which keeps widget tests from
@@ -48,7 +57,7 @@ class KoreSession extends ChangeNotifier {
   /// Widens the source's per-block quality report to the analysis window the
   /// index actually consumes. Everything that decides whether to believe a
   /// reading asks this, and nothing asks the source directly.
-  final SignalQualityGate signalGate = SignalQualityGate();
+  final SignalQualityGate signalGate;
 
   /// The sparkline's window. Null entries are stretches the app was not
   /// measuring through - see [resume].
@@ -90,14 +99,55 @@ class KoreSession extends ChangeNotifier {
   /// that needs the date already takes it as a parameter.
   final DateTime Function() now;
 
+  /// [engine] is normally left null, and this is where the measured rate
+  /// enters the app: the source is asked what it is actually sampling at, and
+  /// the engine, the index, the predictor and the quality gate are all built
+  /// against that one answer rather than against [DspConfig.nominal].
+  ///
+  /// An [engine] passed in wins, and its configuration is what the rest is
+  /// built from - a test that hands in a nominal engine gets a wholly nominal
+  /// session, whatever the source claims about its crystal.
+  ///
+  /// The tuning happens **once, here**, which carries an assumption worth
+  /// stating: the source can answer [EegSource.effectiveSampleRateHz] before
+  /// it has streamed anything. [SimulatedEegSource] can, and so can any source
+  /// that knows its own crystal. A BLE source measuring its rate from arrival
+  /// timestamps cannot - it would report its nominal here and only learn the
+  /// truth some seconds into the session, by which point this engine is built.
+  /// Retuning at that point is a small change and a real question about IIR
+  /// state, and it belongs with the radio that forces it rather than ahead of
+  /// one; see the sample-rate section of `docs/hardware-seam.md`.
   KoreSession({
     EegSource? source,
     DspEngine? engine,
-    this.store,
+    HistoryStore? store,
     DateTime Function()? now,
-  })  : source = source ?? SimulatedEegSource(),
-        engine = engine ?? createDspEngine(),
-        now = now ?? DateTime.now;
+  }) : this._resolved(
+          source ?? SimulatedEegSource(),
+          engine,
+          store,
+          now ?? DateTime.now,
+        );
+
+  KoreSession._resolved(
+    EegSource source,
+    DspEngine? engine,
+    HistoryStore? store,
+    DateTime Function() now,
+  ) : this._tuned(
+          source,
+          engine ??
+              createDspEngine(
+                  config:
+                      DspConfig.forMeasuredRate(source.effectiveSampleRateHz)),
+          store,
+          now,
+        );
+
+  KoreSession._tuned(this.source, this.engine, this.store, this.now)
+      : index = CognitiveLoadIndex(config: engine.config),
+        predictor = FocusCrashPredictor(config: engine.config),
+        signalGate = SignalQualityGate(config: engine.config);
 
   // --- Read model for the UI ---------------------------------------------
 
@@ -220,9 +270,14 @@ class KoreSession extends ChangeNotifier {
       signalQuality.hasPerElectrodeContact &&
       signalQuality.electrodesNeedingAttention.isEmpty;
 
-  /// The rate the device is actually sampling at, against the 256 Hz the DSP
-  /// was built for.
+  /// The rate the device is actually sampling at, as its own front end
+  /// measures it.
   double get measuredSampleRateHz => signalQuality.measuredRateHz;
+
+  /// The rate the analysis is tuned to. Equal to [measuredSampleRateHz] on a
+  /// device whose crystal has not moved since the session opened, and equal to
+  /// [DspConfig.nominalSampleRateHz] on one that reported nothing believable.
+  double get tunedSampleRateHz => config.sampleRateHz;
 
   /// Oldest-to-newest index history, for the sparkline. Null where nothing was
   /// measured.
@@ -393,9 +448,8 @@ class KoreSession extends ChangeNotifier {
 
   /// One analysis window. Below this a gap cannot span a frame, so there is
   /// nothing to refuse.
-  static final Duration _minimumGap = Duration(
-      milliseconds:
-          (DspConfig.windowSize / DspConfig.sampleRateHz * 1000).round());
+  late final Duration _minimumGap =
+      Duration(microseconds: (config.windowSeconds * 1e6).round());
 
   /// Drop the link without tearing the session down. The pairing screen's
   /// Cancel; [start] picks it back up.

@@ -114,7 +114,7 @@ void main() {
       _drive(cli, _loadTheta, _loadAlpha, 4,
           quality: SignalQualityLevel.unusable);
 
-      _drive(cli, _loadTheta, _loadAlpha, CognitiveLoadIndex.kStrainDwellFrames - 1);
+      _drive(cli, _loadTheta, _loadAlpha, CognitiveLoadIndex.kNominalStrainDwellFrames - 1);
       expect(cli.state, LoadState.steady);
 
       _drive(cli, _loadTheta, _loadAlpha, 1);

@@ -15,13 +15,14 @@ simulated.**
 | Area | State |
 |---|---|
 | DSP pipeline (filtering, band power, index) | Implemented, unit-tested |
+| Measured sample rate, end to end | Implemented; filters and every frame-counted duration follow the device's real crystal |
 | Live dashboard (gauge, trend, reset protocol) | Implemented |
 | Windows desktop build | Working |
 | Android build | Working, with the native DSP cross-compiled |
 | First run: welcome, pairing, contact check | Implemented |
 | Session history | Implemented |
 | Simulated EEG source | Implemented, with the link and every fault it can have |
-| Native C++/FFI DSP path | Implemented on Windows and Android; parity-tested against Dart |
+| Native C++/FFI DSP path | Implemented on Windows and Android; parity-tested against Dart at 256 Hz and off-nominal |
 | Suspend and resume | Implemented; a gap is refused, never spliced |
 | BLE / real hardware | Not implemented (seam in place; the platform-code decision it waited on is taken) |
 | Notification tier, screen-wake | Implemented on Android, over an in-repo platform channel |
@@ -48,18 +49,28 @@ dart run tool/cli_probe.dart   # sweep load levels and print the index curve
 
 ## How it works
 
-**1. Sensing.** A stream of microvolt samples at 256 Hz. Today this comes from
-`ScenarioEEGGenerator`, which models alpha suppression and rising frontal
-theta as a cognitive-load scalar climbs, over pink background noise with
-drifting band frequencies.
+**1. Sensing.** A stream of microvolt samples at a nominal 256 Hz. Today this
+comes from `ScenarioEEGGenerator`, which models alpha suppression and rising
+frontal theta as a cognitive-load scalar climbs, over pink background noise
+with drifting band frequencies.
+
+Nominal, not assumed: the source reports the rate it is *measured* to be
+running at, and the analysis is built against that. A real crystal runs at
+255.7 or 261 Hz and moves with temperature, and a 60 Hz notch built against
+the wrong rate stops notching — at 2% of rate error, over half the mains walks
+straight through it.
 
 **2. Signal chain** (`lib/dsp/`).
 
 - One-pole DC blocker at 0.5 Hz.
-- 60 Hz RBJ notch biquad (Q = 20) for mains rejection.
+- 60 Hz RBJ notch biquad (Q = 20) for mains rejection, tuned to the rate the
+  device is actually sampling at rather than to the nominal one.
 - Goertzel bank over a 512-sample (2.0 s) periodic-Hann window, hop 64, so
   frames land 4× per second with exactly 0.5 Hz bin spacing.
-  Theta = 4.0–7.5 Hz, alpha = 8.0–12.0 Hz.
+  Theta = 4.0–7.5 Hz, alpha = 8.0–12.0 Hz. Every figure in this paragraph is
+  quoted at the nominal rate; on a device sampling faster, the frames land
+  faster and the bins are wider, and every duration in the app is derived from
+  the measured rate rather than counted in frames against a constant.
 
   Goertzel rather than an FFT because only 17 of 256 bins are needed, and each
   Goertzel bin is *exactly* the corresponding DFT bin — the band powers are not

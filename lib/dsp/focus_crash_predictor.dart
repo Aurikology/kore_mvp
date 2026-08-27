@@ -140,17 +140,39 @@ class FocusCrashPredictor {
   /// Confidence a warning must reach before it is published.
   static const double kMinConfidence = 0.35;
 
-  /// Frames the criteria must hold before a warning latches, ~1 s at 4 Hz.
+  /// How long the criteria must hold before a warning latches.
   ///
   /// One-sided on purpose: entering a warning is dwelled so a single noisy
   /// window cannot raise an alarm, but leaving one is immediate. A warning
   /// that outlives the risk it described is worse than one that never fired.
-  static const int kConfirmFrames = 4;
+  ///
+  /// A second, not the four frames it used to be. Every constant in this class
+  /// is now a duration, because a frame is a hop of samples and only a device
+  /// sampling at exactly 256 Hz makes that a quarter of a second. The horizon
+  /// this predicts over is measured in real seconds; a window counted in
+  /// frames against the wrong rate fits its line to the wrong span of time and
+  /// scales every slope it reports by the same error.
+  static const double kConfirmSeconds = 1.0;
 
-  static const double _frameSeconds = 1.0 / DspConfig.framesPerSecond;
+  /// [kConfirmSeconds] in frames at the nominal rate: the published figure.
+  /// What a given predictor applies is [confirmFrames].
+  static final int kNominalConfirmFrames =
+      DspConfig.nominal.framesForSeconds(kConfirmSeconds);
 
-  final int _windowFrames = (kWindowSeconds * DspConfig.framesPerSecond).round();
-  final int _minFrames = (kMinWindowSeconds * DspConfig.framesPerSecond).round();
+  /// The analysis configuration the frames arriving here were produced by.
+  final DspConfig config;
+
+  FocusCrashPredictor({this.config = DspConfig.nominal});
+
+  late final double _frameSeconds = 1.0 / config.framesPerSecond;
+
+  /// [kConfirmSeconds] in frames at this configuration's rate. Public because
+  /// a test that drives the predictor frame by frame has to know how many
+  /// frames a second is, and deriving it a second time in the test is exactly
+  /// the duplication this change exists to remove.
+  late final int confirmFrames = config.framesForSeconds(kConfirmSeconds);
+  late final int _windowFrames = config.framesForSeconds(kWindowSeconds);
+  late final int _minFrames = config.framesForSeconds(kMinWindowSeconds);
 
   final ListQueue<_Point> _window = ListQueue<_Point>();
 
@@ -286,7 +308,7 @@ class FocusCrashPredictor {
     if (confidence < kMinConfidence) return steady(confidence);
 
     _framesConfirming++;
-    if (_framesConfirming < kConfirmFrames) {
+    if (_framesConfirming < confirmFrames) {
       return CrashForecast(
         status: CrashForecastStatus.steady,
         secondsToCrossing: crossing,

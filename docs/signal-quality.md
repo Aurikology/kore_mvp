@@ -34,7 +34,7 @@ class SignalQuality {
   final double? impedanceKOhm;   // informational; never gates anything
   final int droppedSamples;      // exact, from device-side sample indices
   final double measuredRateHz;   // measured, not claimed
-  final double nominalRateHz;
+  final double referenceRateHz;  // what drift is measured *against*
 }
 ```
 
@@ -147,12 +147,37 @@ gives ground: the alternative is that KORE simply does not run on such a
 device. Absence of evidence is not evidence of a fault. `contactMeasured` is
 what stops it being sold as evidence of health.
 
-**Correcting for sample-rate drift.** Drift is *detected* and gated on; the DSP
-still runs at a compile-time 256 Hz. Making `DspEngine` take its rate is step 3
-of `docs/hardware-seam.md`, it touches the C++ port and its 1e-9 parity, and it
-should be made deliberately rather than smuggled in behind a quality flag.
-Refusing to trust a drifted signal is honest in the meantime; silently
-mis-analysing one is not.
+**Correcting for sample-rate drift.** Done - step 3 of `docs/hardware-seam.md`.
+The DSP no longer runs at a compile-time 256 Hz: `DspConfig` carries the rate,
+`KoreSession` builds the engine, the index, the predictor and this gate against
+what the source measured, and the C++ port needed no change because
+`kore_dsp_create` always took `fs` as a parameter - only the Dart side was
+passing it a constant. Parity is checked at 261.12 Hz as well as at 256.
+
+The consequence for *this* file is a rename, and it is the interesting part.
+`nominalRateHz` meant two things that used to be the same number - what the
+device claims, and what the analysis was built for - and they have come apart.
+Drift is now measured against `referenceRateHz`, which is what the engine is
+actually tuned to, because a crystal that steadily runs at 261.12 Hz is
+*accommodated* rather than merely detected: the notch lands on a true 60.000 Hz
+and the frame counters are denominated correctly, so there is nothing left to
+warn about. Measured against the old 256 Hz constant, that device would have
+reported a fault forever while working perfectly, and the gate would have
+refused every frame - a good headset that could never finish calibrating.
+
+What is still a fault is the crystal moving *away* from the tuning, which is a
+real detuning and grows with temperature. The source has no way to know either
+number, so it fills `referenceRateHz` with its own nominal and
+`SignalQualityGate` re-references it; the gate is the only place both the
+device's measurement and the engine's tuning exist. That is the same job it
+already does for the analysis window, one layer down.
+
+How much this was worth is measurable. On a unit-amplitude 60 Hz mains tone,
+an engine tuned to the real rate leaves 0.00019; one built against 256 Hz while
+the device samples at 261.12 leaves 0.53920. Over half the mains survives a
+filter whose entire purpose is removing it, and 0.5% of rate error - ordinary
+for an uncompensated oscillator - is already enough to let a fifth of it
+through.
 
 ## The simulator
 

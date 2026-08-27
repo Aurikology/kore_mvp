@@ -42,7 +42,13 @@ class CognitiveLoadIndex {
   /// headroom to show load climbing.
   static const double kOffset = 1.6;
 
-  /// EMA smoothing at the 4 Hz frame rate (tau ~= 2.1 s).
+  /// EMA smoothing, quoted at the nominal 4 Hz frame rate (tau ~= 2.1 s).
+  ///
+  /// The published number, and not the one actually applied unless the device
+  /// happens to frame at exactly 4 Hz. What has physical meaning here is the
+  /// time constant, not the per-frame coefficient: applying 0.12 per frame to
+  /// a device framing at 4.08 Hz smooths over a shorter window than the 2.1 s
+  /// this was tuned to. [emaAlpha] is the rate-corrected value.
   static const double kEmaAlpha = 0.12;
 
   /// Baseline capture duration.
@@ -55,8 +61,14 @@ class CognitiveLoadIndex {
   static const double kStrainEnter = 70.0;
   static const double kStrainExit = 60.0;
 
-  /// Frames the index must stay above [strainEnter] before strain latches.
-  static const int kStrainDwellFrames = 20; // 5 s at 4 Hz
+  /// How long the index must stay above [strainEnter] before strain latches.
+  ///
+  /// Seconds rather than the frame count this used to be. Five seconds is the
+  /// decision; twenty frames was only ever what five seconds came to at 4 Hz,
+  /// and freezing the arithmetic instead of the intent is how a dwell silently
+  /// becomes 4.9 s on a device whose crystal runs fast. See
+  /// [strainDwellFrames].
+  static const double kStrainDwellSeconds = 5.0;
 
   // --- Personalisation. All of it is policy, so it lives beside the rest of
   // the tuning rather than inside [LoadProfile], which is a data record. ---
@@ -81,6 +93,15 @@ class CognitiveLoadIndex {
   /// Frames of personal index history required before the thresholds move at
   /// all. 2,400 is ten minutes at 4 Hz: long enough that a first short session
   /// cannot personalise anything, short enough to matter within day one.
+  ///
+  /// This one stays a frame count at the *nominal* rate while the dwell above
+  /// became seconds, and the asymmetry is deliberate. [LoadProfile.indexFrames]
+  /// accumulates across sessions, and those sessions may have run at different
+  /// measured rates - so the frames behind the counter have no single rate to
+  /// convert with. A threshold derived from whichever rate happens to be
+  /// running now would mean the same stored profile personalises in one
+  /// session and not in the next. A fixed counter compared against a fixed
+  /// threshold is the lesser error, and it is under half a percent.
   static const int kFramesBeforePersonalising = 2400;
 
   /// How far this session's capture may sit from the long-run personal
@@ -95,8 +116,39 @@ class CognitiveLoadIndex {
 
   static const double _eps = 1e-9;
 
-  final int _calibrationFrames =
-      (kCalibrationSeconds * DspConfig.framesPerSecond).round();
+  /// The analysis configuration the frames being fed here were produced by.
+  ///
+  /// Everything below that used to multiply by a hardcoded 4 now asks this,
+  /// because a frame is one hop of samples and a hop is only a quarter of a
+  /// second on a device sampling at exactly 256 Hz.
+  final DspConfig config;
+
+  late final int _calibrationFrames =
+      config.framesForSeconds(kCalibrationSeconds);
+
+  /// [kStrainDwellSeconds] in frames at the nominal rate: the published
+  /// figure, and the number to quote when talking about the dwell without a
+  /// device in hand. What a given index actually applies is
+  /// [strainDwellFrames], which is this only when the crystal agrees.
+  static final int kNominalStrainDwellFrames =
+      DspConfig.nominal.framesForSeconds(kStrainDwellSeconds);
+
+  /// [kStrainDwellSeconds] in frames at this configuration's rate.
+  late final int strainDwellFrames =
+      config.framesForSeconds(kStrainDwellSeconds);
+
+  /// [kEmaAlpha] corrected to preserve its time constant at this rate.
+  ///
+  /// The smoothing that was tuned is `tau = 2.1 s`, so the coefficient has to
+  /// move with the frame interval to keep it: a device framing faster takes
+  /// smaller steps. The nominal case is returned unconverted rather than
+  /// computed, so every published figure reproduces bit for bit instead of to
+  /// within whatever `pow(0.88, 1.0)` happens to give.
+  late final double emaAlpha = config.isOffNominal
+      ? 1.0 -
+          math.pow(1.0 - kEmaAlpha,
+              DspConfig.nominalSampleRateHz / config.sampleRateHz)
+      : kEmaAlpha;
 
   final List<double> _baselineSamples = [];
   double? _mu;
@@ -113,8 +165,14 @@ class CognitiveLoadIndex {
 
   /// [profile] is what previous runs of the app left behind. The default is a
   /// user it has never seen, and reproduces the constants above exactly.
-  CognitiveLoadIndex({LoadProfile profile = LoadProfile.fresh})
-      : _profile = profile;
+  ///
+  /// [config] defaults to [DspConfig.nominal] for the same reason: an index
+  /// constructed without one behaves exactly as this class did before the
+  /// rate was something a device could disagree about.
+  CognitiveLoadIndex({
+    LoadProfile profile = LoadProfile.fresh,
+    this.config = DspConfig.nominal,
+  }) : _profile = profile;
 
   /// Smoothed index, 0-100. Meaningless until [state] leaves
   /// [LoadState.calibrating].
@@ -145,7 +203,7 @@ class CognitiveLoadIndex {
   double get secondsRemainingInCalibration => _mu != null
       ? 0
       : ((_calibrationFrames - _baselineSamples.length) /
-              DspConfig.framesPerSecond)
+              config.framesPerSecond)
           .clamp(0, double.infinity);
 
   // Debug readouts for the on-screen overlay.
@@ -214,11 +272,8 @@ class CognitiveLoadIndex {
   /// contaminated - so the counter restarts rather than drifting. The
   /// distinction still matters for what the number *means*: it is time spent
   /// visibly in strain, and the notification says exactly that.
-  Duration? get strainFor => _state == LoadState.strain
-      ? Duration(
-          milliseconds:
-              (_strainFrames * 1000 / DspConfig.framesPerSecond).round())
-      : null;
+  Duration? get strainFor =>
+      _state == LoadState.strain ? config.framesToDuration(_strainFrames) : null;
 
   /// Feed one analysis frame. Call once per [BandPowers] produced.
   ///
@@ -287,7 +342,7 @@ class CognitiveLoadIndex {
     // paint nothing at all.
     final safe = raw.isFinite ? raw.clamp(0.0, 100.0) : _cli;
 
-    _cli = _hasCli ? _cli + kEmaAlpha * (safe - _cli) : safe;
+    _cli = _hasCli ? _cli + emaAlpha * (safe - _cli) : safe;
     _hasCli = true;
 
     // The distribution learns from the smoothed value, because that is the one
@@ -336,7 +391,7 @@ class CognitiveLoadIndex {
       // Counted from here, not from the latch, so the dwell is part of the
       // episode. Dropping back below enter before it latches discards the run.
       _strainFrames++;
-      if (_framesAboveEnter >= kStrainDwellFrames) {
+      if (_framesAboveEnter >= strainDwellFrames) {
         _state = LoadState.strain;
       }
     } else {

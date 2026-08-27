@@ -13,7 +13,7 @@ double _run(
   CognitiveLoadIndex cli,
   double seconds,
 ) {
-  final blocks = (seconds * DspConfig.framesPerSecond).round();
+  final blocks = (seconds * DspConfig.nominal.framesPerSecond).round();
   final samplesPerBlock = DspConfig.hopSize;
 
   var sum = 0.0;

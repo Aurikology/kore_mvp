@@ -23,6 +23,17 @@ import '../services/signal_quality.dart';
 /// unusable report, a full window of usable samples has to pass before a frame
 /// can be believed again. That interval is [SignalFault.settling].
 class SignalQualityGate {
+  /// The analysis configuration this gate judges against.
+  ///
+  /// It is here for the same reason the window size is: both are facts about
+  /// what the analysis does that the source has no way to know. The source
+  /// compares its measured rate against its own nominal; the engine may have
+  /// been tuned to that measured rate instead, in which case there is no
+  /// detuning and nothing to report. Only this side has both numbers.
+  final DspConfig config;
+
+  SignalQualityGate({this.config = DspConfig.nominal});
+
   SignalQuality _reported = SignalQuality.unreported;
 
   /// Usable samples delivered since the last unusable report. Starts full, so
@@ -70,6 +81,10 @@ class SignalQualityGate {
   /// block's own report, so a source that publishes on both channels loses
   /// nothing and double-counts nothing.
   void observeQuality(SignalQuality quality) {
+    // Re-referenced before anything reads a verdict off it, so a crystal the
+    // engine was built against does not spend the whole session reported as
+    // drifting away from a constant nothing is using.
+    quality = quality.referencedTo(config.sampleRateHz);
     _reported = quality;
     if (!quality.isUsable) {
       _usableSamples = 0;
