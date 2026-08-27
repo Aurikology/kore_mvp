@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:kore/dsp/band_powers.dart';
 import 'package:kore/dsp/cognitive_load_index.dart';
 import 'package:kore/dsp/dart_dsp_engine.dart';
 import 'package:kore/dsp/dsp_engine.dart';
@@ -194,6 +195,87 @@ void main() {
                 DspConfig.nominal.framesPerSecond),
             1e-9),
       );
+    });
+
+    test('a faster crystal smooths over the same real time, not frames', () {
+      // The smoothing as *applied*, not the getter's arithmetic. A crystal 8%
+      // fast, so the correction is bigger than one frame of quantisation and
+      // the test can actually tell the two apart.
+      const fast = DspConfig(sampleRateHz: 256.0 * 1.08);
+
+      CognitiveLoadIndex calibrated(DspConfig config) {
+        final cli = CognitiveLoadIndex(config: config);
+        for (var i = 0; i < config.framesForSeconds(20); i++) {
+          cli.update(const BandPowers(
+              theta: 100, alpha: 100, total: 200, frameIndex: 0));
+        }
+        expect(cli.isCalibrated, isTrue);
+        return cli;
+      }
+
+      const step =
+          BandPowers(theta: 900, alpha: 100, total: 1000, frameIndex: 0);
+
+      // Where the nominal index has got to six seconds into the step.
+      final ref = calibrated(DspConfig.nominal);
+      for (var i = 0; i < DspConfig.nominal.framesForSeconds(6); i++) {
+        ref.update(step);
+      }
+      final target = ref.value;
+
+      // How long the fast device takes to reach the same place, in seconds.
+      final cli = calibrated(fast);
+      var frames = 0;
+      while (cli.value < target && frames < fast.framesForSeconds(30)) {
+        cli.update(step);
+        frames++;
+      }
+      final seconds = fast.framesToDuration(frames).inMilliseconds / 1000.0;
+
+      // Six seconds, because the time constant is what was tuned. Applying the
+      // raw 0.12 per frame here would get there in 6 / 1.08 = 5.6 s - the same
+      // number of frames, less real time.
+      expect(seconds, closeTo(6.0, 0.3),
+          reason: 'reached the nominal 6 s value after $seconds s');
+    });
+
+    test('the predictor reports slope per real second, not per nominal frame',
+        () {
+      // The load-bearing one. `_frameSeconds` scales every slope the predictor
+      // publishes and every `secondsToCrossing` derived from it, so reverting
+      // it to the nominal rate silently rescales the whole forecast by the
+      // crystal's error. 8% fast, so the error is far larger than the fit
+      // noise.
+      const fast = DspConfig(sampleRateHz: 256.0 * 1.08);
+      final p = FocusCrashPredictor(config: fast);
+
+      // A ramp climbing exactly 2.0 index points per *real* second.
+      const climbPerSecond = 2.0;
+      final frames = fast.framesForSeconds(12);
+      var lastIndex = 0.0;
+      for (var i = 0; i < frames; i++) {
+        final t = i / fast.framesPerSecond;
+        lastIndex = 40.0 + climbPerSecond * t;
+        p.observe(
+          index: lastIndex,
+          deviation: lastIndex / 25.0,
+          state: LoadState.steady,
+          enterThreshold: 70.0,
+        );
+      }
+
+      final f = p.forecast;
+      expect(f.indexSlopePerSecond, closeTo(climbPerSecond, 0.02),
+          reason: 'a predictor counting nominal frames would report '
+              '${climbPerSecond / 1.08} here');
+
+      // And the crossing that falls out of it, in real seconds: the distance
+      // left to the threshold divided by that same real-time slope. Derived
+      // from the last index rather than asserted as a constant, because the
+      // last frame lands at 11.81 s on this crystal, not at 12.
+      expect(f.secondsToCrossing, isNotNull);
+      expect(f.secondsToCrossing!,
+          closeTo((70.0 - lastIndex) / climbPerSecond, 0.05));
     });
 
     test('the predictor fits its line over twelve real seconds', () {

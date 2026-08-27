@@ -84,11 +84,15 @@ class SignalQualityGate {
     // Re-referenced before anything reads a verdict off it, so a crystal the
     // engine was built against does not spend the whole session reported as
     // drifting away from a constant nothing is using.
-    quality = quality.referencedTo(config.sampleRateHz);
-    _reported = quality;
-    if (!quality.isUsable) {
+    //
+    // Stored, not kept in a local. Every later read of this report - including
+    // [observeBlock]'s accounting one line further down - has to be the same
+    // verdict, or the gate ends up judging a frame by one rule and counting
+    // the samples under it by another.
+    _reported = quality.referencedTo(config.sampleRateHz);
+    if (!_reported.isUsable) {
       _usableSamples = 0;
-      _faultsAtContamination = quality.faults;
+      _faultsAtContamination = _reported.faults;
     }
   }
 
@@ -100,7 +104,17 @@ class SignalQualityGate {
     // of conservatism, since the samples *after* a gap are themselves fine;
     // the alternative is arithmetic on where inside the block the splice fell,
     // to save a quarter of a second.
-    if (block.quality.isUsable) _usableSamples += block.length;
+    //
+    // [_reported], never `block.quality`. They are the same measurements but
+    // not the same verdict: the block carries the source's, judged against the
+    // rate the source knew to compare with, and the gate's is judged against
+    // the rate the engine was actually tuned to. Reading the raw one here
+    // wedges the gate on exactly the device this class exists to keep working
+    // - a crystal far enough off nominal that the source calls every block
+    // unusable, and the gate, correctly, does not. Its samples would never
+    // count toward the window, so one dropout or one resume would leave it
+    // settling for the rest of the session.
+    if (_reported.isUsable) _usableSamples += block.length;
   }
 
   /// Treat the analysis window as contaminated by something the source has no
