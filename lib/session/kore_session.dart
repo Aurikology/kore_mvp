@@ -173,6 +173,16 @@ class KoreSession extends ChangeNotifier {
     _index = CognitiveLoadIndex(config: config);
     _predictor = FocusCrashPredictor(config: config);
     _signalGate = SignalQualityGate(config: config);
+
+    // Seeded with what the source is saying right now, because a fresh gate
+    // holds `SignalQuality.unreported` and that reads as *good*. On the block
+    // and quality paths the very next line would correct it, but a re-tune
+    // triggered from the link stream publishes straight to listeners with
+    // nothing in between - and a dropped link is precisely the case that
+    // delivers no blocks to correct it with. The session would announce a
+    // clean signal over a live fault.
+    _signalGate.observeQuality(source.quality);
+
     final profile = _adoptedProfile;
     if (profile != null) _index.adoptProfile(profile);
   }
@@ -529,7 +539,16 @@ class KoreSession extends ChangeNotifier {
 
   /// One analysis window. Below this a gap cannot span a frame, so there is
   /// nothing to refuse.
-  late final Duration _minimumGap =
+  /// A getter, not a cached value, and for exactly the reason [engine] is one.
+  ///
+  /// This is derived from [config], and one analysis window is 2.000 s at
+  /// 256 Hz but 1.961 s at 261.12 Hz. As a `late final` it latched on first
+  /// read - inside [resume] - so a session suspended once *before* the rate
+  /// measurement landed would go on judging every later gap against the
+  /// window it no longer has. That is a small band, but it is the same stale
+  /// -config hazard the four getters above exist to prevent, and it was the
+  /// one value left behind.
+  Duration get _minimumGap =>
       Duration(microseconds: (config.windowSeconds * 1e6).round());
 
   /// Drop the link without tearing the session down. The pairing screen's

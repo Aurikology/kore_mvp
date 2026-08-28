@@ -1,10 +1,22 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:kore/dsp/cognitive_load_index.dart';
 import 'package:kore/dsp/dart_dsp_engine.dart';
 import 'package:kore/dsp/dsp_engine.dart';
+import 'package:kore/dsp/load_profile.dart';
+import 'package:kore/services/history_store.dart';
+import 'package:kore/services/eeg_data_stream.dart';
 import 'package:kore/services/signal_quality.dart';
+import 'package:kore/session/kore_history.dart';
+import 'package:kore/session/reset_record.dart';
 import 'package:kore/session/kore_session.dart';
+import 'package:kore/sources/demo_controls.dart';
+import 'package:kore/sources/eeg_source.dart';
 import 'package:kore/sources/simulated_eeg_source.dart';
+import 'package:kore/sources/source_link.dart';
 
 /// A crystal 2% fast, and a device that needs three seconds of streaming
 /// before it can say so - which is what a BLE source deriving its rate from
@@ -190,6 +202,156 @@ void main() {
       });
     });
 
+    test('it fires once even while there is still no baseline to protect', () {
+      // The one-shot flag on its own. The sibling test above is stopped by the
+      // isCalibrated guard, so it would still pass with the once-ness removed;
+      // here the crystal moves again *before* calibration completes, which is
+      // the only window where the two guards can be told apart. Following that
+      // second move is drift-chasing, and drift-chasing is still deferred.
+      fakeAsync((async) {
+        final source = _lateSource(async);
+        final session = _started(async, source);
+        _advance(async, const Duration(seconds: 5));
+        expect(session.rateTuningProvisional, isFalse);
+        expect(session.tunedSampleRateHz, closeTo(_fastCrystalHz, 1e-9));
+
+        source.setSampleRateError(0.05);
+        _advance(async, const Duration(seconds: 4));
+
+        expect(session.isCalibrated, isFalse,
+            reason: 'or the isCalibrated guard is what stopped it, not the flag');
+        expect(session.tunedSampleRateHz, closeTo(_fastCrystalHz, 1e-9),
+            reason: 'the one shot was spent on the first measurement');
+        session.dispose();
+      });
+    });
+
+    test('a rebuilt index keeps the profile that came off disk', () {
+      // Requirement 5's other half. A rebuilt index with a fresh profile would
+      // silently drop the user's own thresholds and read as a first-ever
+      // session - and every other test here runs with no store, so the
+      // re-adopt branch would never execute.
+      //
+      // A stub store rather than a real file: `start()` awaits the load, and
+      // real disk I/O never completes inside fakeAsync, which the simulated
+      // source needs for its clock.
+      fakeAsync((async) {
+        final session = KoreSession(
+          source: _lateSource(async),
+          store: _StubStore(_personalised),
+        );
+        session.start();
+        async.flushMicrotasks();
+        expect(session.thresholdsPersonalised, isTrue,
+            reason: 'the profile arrived before the re-tune');
+        final personalised = session.strainEnter;
+
+        _advance(async, const Duration(seconds: 6));
+        expect(session.rateTuningProvisional, isFalse,
+            reason: 'the rebuild happened');
+        expect(session.tunedSampleRateHz, closeTo(_fastCrystalHz, 1e-9));
+
+        expect(session.loadProfile.indexFrames, _personalised.indexFrames);
+        expect(
+            session.loadProfile.baselineLogRatio, _personalised.baselineLogRatio);
+        expect(session.thresholdsPersonalised, isTrue,
+            reason: 'a rebuilt index that lost the profile reads as a '
+                'first-ever session');
+        expect(session.strainEnter, personalised);
+        session.dispose();
+      });
+    });
+
+    test('a rebuilt gate does not announce a clean signal over a live fault',
+        () {
+      // A fresh SignalQualityGate holds SignalQuality.unreported, which reads
+      // as good. On the block and quality paths the next line corrects it; a
+      // re-tune reached from the link stream publishes with nothing in
+      // between, and a dropped link delivers no blocks to correct it with.
+      fakeAsync((async) {
+        final source = _lateSource(async);
+        final session = _started(async, source);
+        _advance(async, const Duration(seconds: 1));
+        source.detachElectrode();
+        _advance(async, const Duration(seconds: 4));
+
+        expect(session.rateTuningProvisional, isFalse,
+            reason: 'the rebuild happened with a fault standing');
+        expect(session.signalFaults, isNotEmpty);
+        expect(session.isReadingTrustworthy, isFalse);
+        session.dispose();
+      });
+    });
+
+    test('the suspend-gap threshold follows the new tuning, not the old', () {
+      // `_minimumGap` is one analysis window: 2.000 s at the nominal rate but
+      // 1.961 s at 261.12 Hz. Cached on first read - which happens inside
+      // resume() - it would keep the pre-re-tune value for the rest of the
+      // session, and a gap between the two lengths would be spliced instead of
+      // refused. A suspension in the first seconds is exactly the window this
+      // whole commit is about, so the cache would be primed by the very case
+      // it then gets wrong.
+      fakeAsync((async) {
+        var clock = DateTime(2026, 3, 1, 9);
+        final source = _lateSource(async);
+        final session = KoreSession(source: source, now: () => clock);
+        session.start();
+        async.flushMicrotasks();
+
+        // Suspend and resume once *before* the measurement lands, priming any
+        // cache against the provisional nominal tuning.
+        _advance(async, const Duration(seconds: 1));
+        session.pause();
+        async.flushMicrotasks();
+        clock = clock.add(const Duration(milliseconds: 500));
+        session.resume();
+        async.flushMicrotasks();
+
+        _advance(async, const Duration(seconds: 6));
+        expect(session.rateTuningProvisional, isFalse);
+        expect(session.config.windowSeconds, closeTo(1.9608, 1e-4));
+
+        // A gap longer than the new window but shorter than the old one. It
+        // spans an analysis window on this device and must be refused.
+        session.pause();
+        async.flushMicrotasks();
+        clock = clock.add(const Duration(milliseconds: 1980));
+        session.resume();
+        async.flushMicrotasks();
+
+        expect(session.signalFaults, contains(SignalFault.settling),
+            reason: '1980 ms spans a 1961 ms window; judged against the stale '
+                '2000 ms it would have been spliced in silently');
+        session.dispose();
+      });
+    });
+
+    test('a link-only announcement does not publish a clean gate', () async {
+      // Reached with a hand-built source rather than the simulator, which
+      // always force-publishes the transition on the quality stream. A source
+      // that announces on the link stream alone leaves `_onLink` to re-tune
+      // and notify with nothing in between, and a fresh gate reads as good.
+      //
+      // Worth having for a second reason: it is the only place in the suite
+      // that implements `EegSource` from scratch, which is the claim the seam
+      // makes about BLE being a drop-in.
+      final source = _LinkOnlySource();
+      final session = KoreSession(source: source);
+      addTearDown(session.dispose);
+      await session.start();
+
+      expect(session.rateTuningProvisional, isTrue);
+      source.announceMeasuredRateOnLinkOnly();
+      // Broadcast delivery is asynchronous; let the link event land.
+      await Future<void>.delayed(Duration.zero);
+
+      expect(session.rateTuningProvisional, isFalse, reason: 're-tuned');
+      expect(session.tunedSampleRateHz, closeTo(_fastCrystalHz, 1e-9));
+      expect(session.isReadingTrustworthy, isFalse,
+          reason: 'the electrode is off and the rebuilt gate must say so');
+      expect(session.signalFaults, isNotEmpty);
+    });
+
     test('an injected engine is never replaced', () {
       fakeAsync((async) {
         final engine = DartDspEngine();
@@ -226,4 +388,102 @@ void main() {
       });
     });
   });
+}
+
+/// Enough frames on record that the thresholds have moved off the published
+/// defaults, so losing the profile is visible in behaviour and not only in a
+/// field.
+const LoadProfile _personalised = LoadProfile(
+  baselineLogRatio: -2.0,
+  indexMean: 74.0,
+  indexVariance: 16.0,
+  indexFrames: CognitiveLoadIndex.kFramesBeforePersonalising + 500,
+  sessionCount: 9,
+);
+
+/// A store that answers from memory, so the load completes in a microtask and
+/// fakeAsync can flush it.
+class _StubStore extends HistoryStore {
+  final LoadProfile profile;
+
+  _StubStore(this.profile) : super(File('unused-by-this-stub'));
+
+  @override
+  Future<KoreHistory> loadDocument() async => KoreHistory(
+        resets: ResetHistory.empty,
+        profile: profile,
+        days: DailyLoadLog.empty,
+        app: const AppState(),
+      );
+
+  @override
+  Future<void> saveState({
+    required LoadProfile profile,
+    required DailyLoadLog days,
+  }) async {}
+}
+
+/// A source that reports its measured rate only through the link stream, which
+/// the simulator never does. Minimal on purpose: everything not under test is
+/// the least it can legally be.
+class _LinkOnlySource implements EegSource {
+  final _blocks = StreamController<SampleBlock>.broadcast();
+  final _quality = StreamController<SignalQuality>.broadcast();
+  final _link = StreamController<SourceLink>.broadcast();
+
+  bool _measured = false;
+
+  /// An electrode that is off, standing throughout, so a gate that reset
+  /// itself to `unreported` reads as good and the test can see it.
+  @override
+  SignalQuality get quality => const SignalQuality(
+        contact: 0.0,
+        measuredRateHz: 256.0,
+        referenceRateHz: 256.0,
+      );
+
+  void announceMeasuredRateOnLinkOnly() {
+    _measured = true;
+    _link.add(const SourceLink(state: SourceLinkState.streaming));
+  }
+
+  @override
+  bool get rateMeasured => _measured;
+
+  @override
+  double get effectiveSampleRateHz => _measured ? _fastCrystalHz : 256.0;
+
+  @override
+  int get samplingRateHz => 256;
+
+  @override
+  String get label => 'Link-only test source';
+
+  @override
+  DemoControls? get demo => null;
+
+  @override
+  SourceLink get link => const SourceLink(state: SourceLinkState.streaming);
+
+  @override
+  Stream<SampleBlock> get sampleBlocks => _blocks.stream;
+
+  @override
+  Stream<SignalQuality> get qualityUpdates => _quality.stream;
+
+  @override
+  Stream<SourceLink> get linkUpdates => _link.stream;
+
+  @override
+  Future<void> start() async {}
+
+  @override
+  Future<void> stop() async {}
+
+  @override
+  void dispose() {
+    _blocks.close();
+    _quality.close();
+    _link.close();
+  }
 }
