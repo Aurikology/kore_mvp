@@ -14,7 +14,7 @@ double _run(
   double seconds, {
   SignalQualityLevel quality = SignalQualityLevel.good,
 }) {
-  final blocks = (seconds * DspConfig.framesPerSecond).round();
+  final blocks = (seconds * DspConfig.nominal.framesPerSecond).round();
   var sum = 0.0;
   var count = 0;
 
@@ -97,7 +97,7 @@ void main() {
 
     gen.snapLoad(0.15);
     void push(double seconds) {
-      final blocks = (seconds * DspConfig.framesPerSecond).round();
+      final blocks = (seconds * DspConfig.nominal.framesPerSecond).round();
       for (var b = 0; b < blocks; b++) {
         engine.pushBlock(List<double>.generate(
             DspConfig.hopSize, (_) => gen.nextSampleMicrovolts()));

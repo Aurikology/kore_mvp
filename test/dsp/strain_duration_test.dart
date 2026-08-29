@@ -63,7 +63,7 @@ void _driveUntilAboveEnter(CognitiveLoadIndex cli, double logRatio,
 
 /// The duration a whole number of analysis frames occupies at 4 Hz.
 Duration _frames(int n) =>
-    Duration(milliseconds: (n * 1000 / DspConfig.framesPerSecond).round());
+    Duration(milliseconds: (n * 1000 / DspConfig.nominal.framesPerSecond).round());
 
 const double _loaded = 85.0; // comfortably above the default enter of 70
 const double _calm = 20.0;
@@ -98,7 +98,7 @@ void main() {
       _driveUntilStrain(cli, _deviationFor(_loaded));
 
       expect(cli.state, LoadState.strain);
-      expect(cli.strainFor, _frames(CognitiveLoadIndex.kStrainDwellFrames));
+      expect(cli.strainFor, _frames(CognitiveLoadIndex.kNominalStrainDwellFrames));
       expect(cli.strainFor, const Duration(seconds: 5),
           reason: 'the dwell is part of the episode, not a delay before it');
     });
@@ -110,7 +110,7 @@ void main() {
 
       _drive(cli, _deviationFor(_loaded), 4);
       expect(cli.strainFor,
-          _frames(CognitiveLoadIndex.kStrainDwellFrames + 4));
+          _frames(CognitiveLoadIndex.kNominalStrainDwellFrames + 4));
       expect(cli.strainFor, const Duration(seconds: 6));
     });
 
@@ -127,7 +127,7 @@ void main() {
       expect(cli.value, greaterThan(cli.strainExit));
       expect(cli.value, lessThan(cli.strainEnter));
       expect(cli.strainFor,
-          _frames(CognitiveLoadIndex.kStrainDwellFrames + 40),
+          _frames(CognitiveLoadIndex.kNominalStrainDwellFrames + 40),
           reason: 'the episode did not pause while the index dipped inside '
               'its own hysteresis');
     });
@@ -153,7 +153,7 @@ void main() {
       // One frame short of latching.
       _driveUntilAboveEnter(cli, _deviationFor(_loaded));
       _drive(cli, _deviationFor(_loaded),
-          CognitiveLoadIndex.kStrainDwellFrames - 2);
+          CognitiveLoadIndex.kNominalStrainDwellFrames - 2);
       expect(cli.state, LoadState.steady);
       expect(cli.strainFor, isNull);
 
@@ -161,7 +161,7 @@ void main() {
       _drive(cli, _deviationFor(_calm), 80);
       _driveUntilStrain(cli, _deviationFor(_loaded));
 
-      expect(cli.strainFor, _frames(CognitiveLoadIndex.kStrainDwellFrames),
+      expect(cli.strainFor, _frames(CognitiveLoadIndex.kNominalStrainDwellFrames),
           reason: 'the abandoned run must not be credited to the episode that '
               'actually happened');
     });
@@ -197,7 +197,7 @@ void main() {
       expect(cli.strainFor, isNull);
 
       _driveUntilStrain(cli, _deviationFor(_loaded));
-      expect(cli.strainFor, _frames(CognitiveLoadIndex.kStrainDwellFrames),
+      expect(cli.strainFor, _frames(CognitiveLoadIndex.kNominalStrainDwellFrames),
           reason: 'the episode is the measured five seconds, not the six '
               'minutes since it first latched');
     });

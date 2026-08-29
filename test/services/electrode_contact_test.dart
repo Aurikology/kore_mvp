@@ -8,7 +8,7 @@ SignalQuality _fromPads(List<ElectrodeContact> pads) =>
     SignalQuality.fromElectrodes(
       electrodes: pads,
       measuredRateHz: 256.0,
-      nominalRateHz: 256.0,
+      referenceRateHz: 256.0,
     );
 
 void main() {
@@ -125,7 +125,7 @@ void main() {
       const q = SignalQuality(
         contact: 0.45,
         measuredRateHz: 256.0,
-        nominalRateHz: 256.0,
+        referenceRateHz: 256.0,
       );
       expect(q.hasPerElectrodeContact, isFalse);
       expect(q.electrodes, isEmpty);
@@ -148,7 +148,7 @@ void main() {
       const scalar = SignalQuality(
         contact: 0.45,
         measuredRateHz: 256.0,
-        nominalRateHz: 256.0,
+        referenceRateHz: 256.0,
       );
       expect(perPad.level, scalar.level);
       expect(perPad.faults, scalar.faults);
@@ -159,7 +159,7 @@ void main() {
       final q = SignalQuality.fromElectrodes(
         electrodes: [_e('a', 1.0)],
         measuredRateHz: 256.0,
-        nominalRateHz: 256.0,
+        referenceRateHz: 256.0,
         droppedSamples: 3,
       );
       expect(q.faults, contains(SignalFault.dropout));

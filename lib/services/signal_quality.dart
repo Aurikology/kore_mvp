@@ -211,8 +211,22 @@ class SignalQuality {
   /// temperature.
   final double measuredRateHz;
 
-  /// The rate the device claims, and the one the DSP was built against.
-  final double nominalRateHz;
+  /// The rate drift is measured *against*: the one the analysis is tuned to.
+  ///
+  /// Not "the rate the device claims", which is what this was when the DSP
+  /// was hardcoded to 256 Hz and the two were necessarily the same number.
+  /// They are no longer. A device whose crystal steadily runs at 261 Hz is
+  /// accommodated - the engine is built against 261 Hz, the notch lands on a
+  /// true 60.000 Hz, and the frame counters are denominated correctly - so
+  /// there is nothing left to warn about, and a fault measured against the
+  /// nominal 256 would fire forever on a device that is working perfectly.
+  ///
+  /// What remains a fault is the crystal moving *away* from where the analysis
+  /// was tuned, which is a real detuning and grows with temperature. A source
+  /// fills this with its own nominal, because that is the best it can know;
+  /// `SignalQualityGate` re-references it to the rate the engine was actually
+  /// built against, which is the only place both numbers exist.
+  final double referenceRateHz;
 
   /// Per-electrode contact, when the device reports it. Empty when it does
   /// not, which is not the same as reporting that its electrodes are fine.
@@ -228,7 +242,7 @@ class SignalQuality {
   const SignalQuality({
     required this.contact,
     required this.measuredRateHz,
-    required this.nominalRateHz,
+    required this.referenceRateHz,
     this.impedanceKOhm,
     this.droppedSamples = 0,
     this.electrodes = const [],
@@ -249,7 +263,7 @@ class SignalQuality {
   factory SignalQuality.fromElectrodes({
     required List<ElectrodeContact> electrodes,
     required double measuredRateHz,
-    required double nominalRateHz,
+    required double referenceRateHz,
     int droppedSamples = 0,
   }) {
     ElectrodeContact? worst;
@@ -263,7 +277,7 @@ class SignalQuality {
       impedanceKOhm: worst?.impedanceKOhm,
       droppedSamples: droppedSamples,
       measuredRateHz: measuredRateHz,
-      nominalRateHz: nominalRateHz,
+      referenceRateHz: referenceRateHz,
       electrodes: List.unmodifiable(electrodes),
     );
   }
@@ -275,7 +289,7 @@ class SignalQuality {
         droppedSamples = 0,
         electrodes = const [],
         measuredRateHz = rateHz,
-        nominalRateHz = rateHz;
+        referenceRateHz = rateHz;
 
   /// A source that reports nothing about itself.
   ///
@@ -285,7 +299,7 @@ class SignalQuality {
   static const SignalQuality unreported = SignalQuality(
     contact: null,
     measuredRateHz: 0,
-    nominalRateHz: 0,
+    referenceRateHz: 0,
   );
 
   /// Whether the source can measure coupling at all.
@@ -327,9 +341,25 @@ class SignalQuality {
   /// Absolute rate error as a fraction of nominal. Zero when the source does
   /// not report a rate, since an unmeasured clock cannot be shown to drift.
   double get rateDriftFraction {
-    if (nominalRateHz <= 0 || measuredRateHz <= 0) return 0;
-    return (measuredRateHz - nominalRateHz).abs() / nominalRateHz;
+    if (referenceRateHz <= 0 || measuredRateHz <= 0) return 0;
+    return (measuredRateHz - referenceRateHz).abs() / referenceRateHz;
   }
+
+  /// The same measurements, judged against the rate the analysis is tuned to
+  /// rather than the rate the source knew to compare with.
+  ///
+  /// Only [referenceRateHz] moves. Nothing measured is touched - re-referencing
+  /// changes the verdict on a rate, never the reading of one.
+  SignalQuality referencedTo(double hz) => hz == referenceRateHz
+      ? this
+      : SignalQuality(
+          contact: contact,
+          measuredRateHz: measuredRateHz,
+          referenceRateHz: hz,
+          impedanceKOhm: impedanceKOhm,
+          droppedSamples: droppedSamples,
+          electrodes: electrodes,
+        );
 
   /// Everything wrong with the signal right now. Empty when nothing is.
   Set<SignalFault> get faults {

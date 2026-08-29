@@ -12,8 +12,6 @@ import 'signal_quality.dart';
 /// floor of any scalp electrode.
 const double kFullScaleMicrovolts = 500.0;
 
-const int _kInt16Max = 32767;
-
 /// A single EEG sample from the wearable.
 class EEGSample {
   /// Milliseconds since epoch.
@@ -31,55 +29,24 @@ class EEGSample {
     this.rawBytes,
   });
 
-  /// Wire format: `[sampleCount u16][channelCount u8][ch0 i16]...[chN i16]`,
-  /// little-endian throughout.
+  /// The wire format lives in [KorePacket], not here.
   ///
-  /// Nothing in the desktop build calls this yet - there is no radio. It is
-  /// the contract the firmware will have to meet, and it is unit-tested so
-  /// that contract is pinned down before hardware exists.
-  factory EEGSample.fromBLEBytes(Uint8List bytes, int timestamp) {
-    if (bytes.length < 3) {
-      return EEGSample(timestamp: timestamp, channels: [], rawBytes: bytes);
-    }
-
-    // Respect offsetInBytes: a Uint8List can be a view into a larger buffer,
-    // and ByteData.view(bytes.buffer) alone would silently read from offset 0
-    // of the backing store instead of the start of this list.
-    final byteData =
-        ByteData.view(bytes.buffer, bytes.offsetInBytes, bytes.lengthInBytes);
-    final channelCount = byteData.getUint8(2);
-
-    final channels = <double>[];
-    var offset = 3;
-    for (var ch = 0; ch < channelCount && offset + 1 < bytes.length; ch++) {
-      final rawValue = byteData.getInt16(offset, Endian.little);
-      channels.add((rawValue / _kInt16Max) * kFullScaleMicrovolts);
-      offset += 2;
-    }
-
-    return EEGSample(
-      timestamp: timestamp,
-      channels: channels,
-      rawBytes: bytes,
-    );
-  }
-
-  Uint8List toBLEBytes() {
-    final data = ByteData(3 + channels.length * 2);
-    data.setUint16(0, 1, Endian.little);
-    data.setUint8(2, channels.length);
-
-    var offset = 3;
-    for (final uv in channels) {
-      final raw = ((uv / kFullScaleMicrovolts) * _kInt16Max)
-          .round()
-          .clamp(-_kInt16Max, _kInt16Max);
-      data.setInt16(offset, raw, Endian.little);
-      offset += 2;
-    }
-
-    return data.buffer.asUint8List(0, offset);
-  }
+  /// There was a `fromBLEBytes`/`toBLEBytes` pair on this class, pinning a
+  /// per-sample format before there was firmware. It was right to write one
+  /// down early and it is gone now, for two reasons.
+  ///
+  /// It could not carry what the seam grew to need. A notification has to
+  /// report where its samples sat in the device's own stream - `SampleBlock`
+  /// takes `firstSampleIndex` so a gap is counted rather than guessed - and
+  /// per-pad contact, which nothing in the DSP can recover because a detached
+  /// electrode produces a genuinely elevated theta/alpha ratio rather than
+  /// silence. Neither is a property of one sample, so neither had anywhere to
+  /// go.
+  ///
+  /// And it had no caller and, contrary to its own doc comment, no test. A
+  /// format nobody encodes, nobody decodes and nothing checks is not a pinned
+  /// contract; it is a second answer for a firmware author to find next to the
+  /// real one.
 
   @override
   String toString() {

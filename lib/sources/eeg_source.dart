@@ -58,7 +58,25 @@ abstract class EegSource {
 
   /// The rate the device is actually sampling at, measured rather than
   /// claimed. [samplingRateHz] is the nominal figure it was built to.
+  ///
+  /// Read [rateMeasured] before treating this as a measurement.
   double get effectiveSampleRateHz;
+
+  /// Whether [effectiveSampleRateHz] is a measurement yet, or still the
+  /// nominal figure standing in for one.
+  ///
+  /// The same distinction [SignalQuality.contactMeasured] draws, and it exists
+  /// here for a sharper reason. A source that measures its rate from packet
+  /// arrival times - which is what a BLE source is - cannot answer before it
+  /// has streamed, and the analysis is built at the moment the session opens.
+  /// Without this the session cannot tell "this device genuinely runs at
+  /// 256 Hz" from "this device has not looked yet", so it would either refuse
+  /// to accommodate any crystal or re-tune itself every time a number moved.
+  ///
+  /// A source that knows its own crystal - the simulator, or a device that
+  /// reports it in a characteristic - returns true from the start, and the
+  /// session tunes once and never revisits it.
+  bool get rateMeasured;
 
   int get samplingRateHz;
 

@@ -18,7 +18,7 @@ double _mean(
   CognitiveLoadIndex cli,
   double seconds,
 ) {
-  final blocks = (seconds * DspConfig.framesPerSecond).round();
+  final blocks = (seconds * DspConfig.nominal.framesPerSecond).round();
   var sum = 0.0;
   var n = 0;
 

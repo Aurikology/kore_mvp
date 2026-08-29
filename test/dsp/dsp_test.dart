@@ -8,7 +8,7 @@ import 'package:kore/dsp/dart_dsp_engine.dart';
 import 'package:kore/dsp/dsp_engine.dart';
 import 'package:kore/dsp/hann.dart';
 
-const fs = DspConfig.sampleRateHz;
+const fs = DspConfig.nominalSampleRateHz;
 
 /// Drive [engine] with a pure tone and return the last completed frame.
 BandPowers _toneFrame(double freqHz, double amplitudeUv,

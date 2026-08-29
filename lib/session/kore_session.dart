@@ -13,7 +13,7 @@ import '../services/history_store.dart';
 import '../services/signal_quality.dart';
 import '../sources/demo_controls.dart';
 import '../sources/eeg_source.dart';
-import '../sources/simulated_eeg_source.dart';
+import '../sources/eeg_source_factory.dart';
 import '../sources/source_link.dart';
 import 'kore_history.dart';
 import 'reset_record.dart';
@@ -36,9 +36,29 @@ class KoreSession extends ChangeNotifier {
   /// [DemoControls], which a real source does not offer - so a BLE source
   /// drops in here without a single change below this line.
   final EegSource source;
-  final DspEngine engine;
-  final CognitiveLoadIndex index = CognitiveLoadIndex();
-  final FocusCrashPredictor predictor = FocusCrashPredictor();
+
+  late DspEngine _engine;
+  late CognitiveLoadIndex _index;
+  late FocusCrashPredictor _predictor;
+  late SignalQualityGate _signalGate;
+
+  /// The analysis stack. Rebuilt at most once per session, if the source turns
+  /// out to have been unable to report its crystal at construction - see
+  /// [_retuneToMeasuredRate]. Read through getters rather than held, because
+  /// anything caching one of these across that moment would go on feeding a
+  /// detuned engine.
+  DspEngine get engine => _engine;
+  CognitiveLoadIndex get index => _index;
+  FocusCrashPredictor get predictor => _predictor;
+
+  /// What the analysis is tuned to, which is the rate [source] was measured to
+  /// be running at when this session was built - not the 256 Hz constant.
+  ///
+  /// One configuration, built once, and handed to all four of the things that
+  /// need it. They have to agree: an engine framing at 4.08 Hz feeding an
+  /// index counting dwell at 4 Hz is a five-second dwell that lasts 4.9 s, and
+  /// nothing in the app would ever have said so.
+  DspConfig get config => engine.config;
 
   /// Null means history lives in memory for this run only. The real store is
   /// wired at the composition root (`main`), which keeps widget tests from
@@ -48,7 +68,25 @@ class KoreSession extends ChangeNotifier {
   /// Widens the source's per-block quality report to the analysis window the
   /// index actually consumes. Everything that decides whether to believe a
   /// reading asks this, and nothing asks the source directly.
-  final SignalQualityGate signalGate = SignalQualityGate();
+  SignalQualityGate get signalGate => _signalGate;
+
+  /// Whether the analysis is tuned to a rate the source only *claimed*.
+  ///
+  /// True from construction until the source can measure - which for a source
+  /// that knows its own crystal is never true at all.
+  bool _rateProvisional = false;
+
+  /// Whether this session built its own engine, and may therefore replace it.
+  /// An injected engine is the caller's, and is left alone.
+  bool _ownsEngine = false;
+
+  /// The profile that arrived from disk, kept so a rebuilt index can re-adopt
+  /// it. Losing it on a re-tune would silently un-personalise the session.
+  LoadProfile? _adoptedProfile;
+
+  /// Whether the analysis is still running on a claimed rate rather than a
+  /// measured one. Surfaced for tests and for a demo that wants to say so.
+  bool get rateTuningProvisional => _rateProvisional;
 
   /// The sparkline's window. Null entries are stretches the app was not
   /// measuring through - see [resume].
@@ -90,14 +128,113 @@ class KoreSession extends ChangeNotifier {
   /// that needs the date already takes it as a parameter.
   final DateTime Function() now;
 
+  /// [engine] is normally left null, and this is where the measured rate
+  /// enters the app: the source is asked what it is actually sampling at, and
+  /// the engine, the index, the predictor and the quality gate are all built
+  /// against that one answer rather than against [DspConfig.nominal].
+  ///
+  /// An [engine] passed in wins, and its configuration is what the rest is
+  /// built from - a test that hands in a nominal engine gets a wholly nominal
+  /// session, whatever the source claims about its crystal, and no re-tune
+  /// will ever replace it.
+  ///
+  /// A source that cannot answer yet - [EegSource.rateMeasured] false, which
+  /// is what a BLE source deriving its rate from arrival times looks like at
+  /// the instant a session opens - gets [DspConfig.nominal] and a promise:
+  /// [_retuneToMeasuredRate] rebuilds all four the moment a real measurement
+  /// arrives, provided the baseline has not been captured yet.
   KoreSession({
     EegSource? source,
     DspEngine? engine,
     this.store,
     DateTime Function()? now,
-  })  : source = source ?? SimulatedEegSource(),
-        engine = engine ?? createDspEngine(),
-        now = now ?? DateTime.now;
+  })  : source = source ?? createEegSource(),
+        now = now ?? DateTime.now {
+    _ownsEngine = engine == null;
+    _engine = engine ?? createDspEngine(config: _tuningFor(this.source));
+    _rateProvisional = _ownsEngine && !this.source.rateMeasured;
+    _buildAnalysis();
+  }
+
+  /// The configuration to build an engine against for [source] right now.
+  ///
+  /// A source that has not measured its rate is not asked for one: its
+  /// [EegSource.effectiveSampleRateHz] is a nominal wearing a measurement's
+  /// name, and tuning to it would look identical to tuning to a real 256 Hz
+  /// crystal - which is the distinction that decides whether this session ever
+  /// re-tunes.
+  static DspConfig _tuningFor(EegSource source) => source.rateMeasured
+      ? DspConfig.forMeasuredRate(source.effectiveSampleRateHz)
+      : DspConfig.nominal;
+
+  /// Everything downstream of the engine, built against its configuration.
+  void _buildAnalysis() {
+    final config = _engine.config;
+    _index = CognitiveLoadIndex(config: config);
+    _predictor = FocusCrashPredictor(config: config);
+    _signalGate = SignalQualityGate(config: config);
+
+    // Seeded with what the source is saying right now, because a fresh gate
+    // holds `SignalQuality.unreported` and that reads as *good*. On the block
+    // and quality paths the very next line would correct it, but a re-tune
+    // triggered from the link stream publishes straight to listeners with
+    // nothing in between - and a dropped link is precisely the case that
+    // delivers no blocks to correct it with. The session would announce a
+    // clean signal over a live fault.
+    _signalGate.observeQuality(source.quality);
+
+    final profile = _adoptedProfile;
+    if (profile != null) _index.adoptProfile(profile);
+  }
+
+  /// Rebuild the analysis against a rate the source has now actually measured.
+  ///
+  /// At most once, and only before a baseline exists. Both halves matter.
+  ///
+  /// *Once*, because this is here for a source that could not answer at
+  /// construction, not for a crystal wandering with temperature. Following
+  /// drift is a different feature with a different hazard - it would mean
+  /// swapping filter coefficients under live state - and it is still deferred.
+  ///
+  /// *Before the baseline*, because the baseline is the reference every
+  /// reading for the rest of the session is measured against. Rebuilding after
+  /// it would either throw away a capture the user waited fifteen seconds for,
+  /// or keep one taken through a notch that was in the wrong place. Neither is
+  /// worth it, and arriving that late is not the case this exists for: a
+  /// source measures its rate in seconds and calibration takes fifteen. If it
+  /// does arrive late, the session keeps the tuning it has and the drift
+  /// banding reports the difference - which is exactly the behaviour that
+  /// existed before any of this, and is honest rather than silent.
+  ///
+  /// Rebuilding rather than re-tuning in place is deliberate and is the reason
+  /// this needs no [SignalQualityGate.contaminate]. A fresh engine starts with
+  /// an empty ring, so it cannot emit a frame until a full window of samples
+  /// has arrived at the new tuning; there is no discontinuity to settle,
+  /// because there is nothing on the far side of it.
+  void _retuneToMeasuredRate() {
+    if (!_rateProvisional) return;
+    if (!source.rateMeasured) return;
+
+    // One shot regardless of what follows: the source has now answered, and
+    // the answer is either taken or refused as too late.
+    _rateProvisional = false;
+
+    final config = DspConfig.forMeasuredRate(source.effectiveSampleRateHz);
+    if (config.sampleRateHz == _engine.config.sampleRateHz) return;
+    if (_index.isCalibrated) return;
+
+    final previous = _engine;
+    _engine = createDspEngine(config: config);
+    previous.dispose();
+    _buildAnalysis();
+
+    // Nothing measured through the old tuning survives. The queue is normally
+    // empty here - a baseline has not landed, so nothing has been recorded -
+    // but a partial capture in the index certainly is not, and it goes with
+    // the index it was captured into.
+    _history.clear();
+    notifyListeners();
+  }
 
   // --- Read model for the UI ---------------------------------------------
 
@@ -220,9 +357,14 @@ class KoreSession extends ChangeNotifier {
       signalQuality.hasPerElectrodeContact &&
       signalQuality.electrodesNeedingAttention.isEmpty;
 
-  /// The rate the device is actually sampling at, against the 256 Hz the DSP
-  /// was built for.
+  /// The rate the device is actually sampling at, as its own front end
+  /// measures it.
   double get measuredSampleRateHz => signalQuality.measuredRateHz;
+
+  /// The rate the analysis is tuned to. Equal to [measuredSampleRateHz] on a
+  /// device whose crystal has not moved since the session opened, and equal to
+  /// [DspConfig.nominalSampleRateHz] on one that reported nothing believable.
+  double get tunedSampleRateHz => config.sampleRateHz;
 
   /// Oldest-to-newest index history, for the sparkline. Null where nothing was
   /// measured.
@@ -309,6 +451,10 @@ class KoreSession extends ChangeNotifier {
     if (loaded != null) {
       _resetHistory = loaded.resets;
       _days = loaded.days;
+      // Held as well as adopted, so a re-tune that rebuilds the index can put
+      // it back. A rebuilt index with a fresh profile would quietly drop the
+      // user's own thresholds and read as a first-ever session.
+      _adoptedProfile = loaded.profile;
       index.adoptProfile(loaded.profile);
       notifyListeners();
     }
@@ -393,9 +539,17 @@ class KoreSession extends ChangeNotifier {
 
   /// One analysis window. Below this a gap cannot span a frame, so there is
   /// nothing to refuse.
-  static final Duration _minimumGap = Duration(
-      milliseconds:
-          (DspConfig.windowSize / DspConfig.sampleRateHz * 1000).round());
+  /// A getter, not a cached value, and for exactly the reason [engine] is one.
+  ///
+  /// This is derived from [config], and one analysis window is 2.000 s at
+  /// 256 Hz but 1.961 s at 261.12 Hz. As a `late final` it latched on first
+  /// read - inside [resume] - so a session suspended once *before* the rate
+  /// measurement landed would go on judging every later gap against the
+  /// window it no longer has. That is a small band, but it is the same stale
+  /// -config hazard the four getters above exist to prevent, and it was the
+  /// one value left behind.
+  Duration get _minimumGap =>
+      Duration(microseconds: (config.windowSeconds * 1e6).round());
 
   /// Drop the link without tearing the session down. The pairing screen's
   /// Cancel; [start] picks it back up.
@@ -405,9 +559,16 @@ class KoreSession extends ChangeNotifier {
   /// the UI talks to.
   Future<void> disconnect() => source.stop();
 
-  void _onLink(SourceLink link) => notifyListeners();
+  void _onLink(SourceLink link) {
+    _retuneToMeasuredRate();
+    notifyListeners();
+  }
 
   void _onQuality(SignalQuality quality) {
+    // Before the gate sees it. A report carrying the first measured rate is
+    // also the report that would be banded as drift against the old tuning,
+    // and re-tuning first means the gate never forms that verdict at all.
+    _retuneToMeasuredRate();
     signalGate.observeQuality(quality);
     if (_resetActive && !signalGate.isUsable) _resetSignalClean = false;
     notifyListeners();
@@ -416,6 +577,10 @@ class KoreSession extends ChangeNotifier {
   void _onBlock(SampleBlock block) {
     if (block.isEmpty) return;
 
+    // Also here, and not only on the quality stream: a source is free to
+    // announce a measured rate on whichever channel it likes, and this one
+    // carries a report on every block.
+    _retuneToMeasuredRate();
     signalGate.observeBlock(block);
 
     // The engine is fed whatever arrives, always. Its filters have to stay

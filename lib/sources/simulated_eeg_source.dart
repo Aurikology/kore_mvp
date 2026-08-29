@@ -61,6 +61,14 @@ class SimulatedEegSource implements EegSource, DemoControls {
   /// Fractional clock error, e.g. 0.004 for a crystal running 0.4% fast.
   double _rateErrorFraction = 0;
 
+  /// Seconds of streaming before the device can report its own rate. Zero
+  /// means it knows its crystal up front, which is the default and is what
+  /// every existing test assumes.
+  double _rateMeasureDelaySeconds = 0;
+
+  /// Whether the transition to a measured rate has been announced.
+  bool _rateMeasureAnnounced = false;
+
   SignalQuality _quality = const SignalQuality.pristine(256.0);
 
   SourceLink _link = SourceLink.idle;
@@ -164,9 +172,25 @@ class SimulatedEegSource implements EegSource, DemoControls {
   PatchIdentity get _identity =>
       PatchIdentity(name: patchName, batteryPercent: batteryPercent);
 
+  /// What the crystal is actually doing, which is true from the first sample
+  /// whether or not the device has worked it out yet. The pump runs off this.
+  double get _trueRateHz => generator.sampleRateHz * (1 + _rateErrorFraction);
+
+  @override
+  bool get rateMeasured =>
+      _rateMeasureDelaySeconds <= 0 ||
+      generator.elapsedSeconds >= _rateMeasureDelaySeconds;
+
+  /// The rate the device *reports*, which is its nominal until it has streamed
+  /// long enough to measure.
+  ///
+  /// The gap between this and [_trueRateHz] is the whole point of
+  /// [measureRateAfter]: the samples are already arriving 2% fast, and the
+  /// source is still saying 256, because that is all a device measuring its
+  /// own clock from arrival times can honestly say yet.
   @override
   double get effectiveSampleRateHz =>
-      generator.sampleRateHz * (1 + _rateErrorFraction);
+      rateMeasured ? _trueRateHz : generator.sampleRateHz;
 
   @override
   int get samplingRateHz => generator.sampleRateHz.round();
@@ -243,7 +267,7 @@ class SimulatedEegSource implements EegSource, DemoControls {
     // and the count is where that has to show up. Reporting a drifted rate
     // while still emitting exactly 256 Hz would be a simulator that agrees
     // with itself and with nothing else.
-    final exact = deltaSeconds * effectiveSampleRateHz + _sampleCarry;
+    final exact = deltaSeconds * _trueRateHz + _sampleCarry;
     final count = exact.floor();
     _sampleCarry = exact - count;
 
@@ -290,7 +314,8 @@ class SimulatedEegSource implements EegSource, DemoControls {
 
     final delivered = n - dropped;
     if (delivered <= 0) {
-      _publishQuality(_report(dropped));
+      _publishQuality(_report(dropped),
+          force: _takeRateMeasurementAnnouncement());
       return;
     }
 
@@ -305,7 +330,8 @@ class SimulatedEegSource implements EegSource, DemoControls {
     );
     _deviceSampleIndex += delivered;
 
-    _publishQuality(_report(dropped));
+    _publishQuality(_report(dropped),
+        force: _takeRateMeasurementAnnouncement());
 
     if (!_controller.isClosed) {
       _controller.add(SampleBlock(
@@ -334,7 +360,7 @@ class SimulatedEegSource implements EegSource, DemoControls {
       ],
       droppedSamples: droppedSamples,
       measuredRateHz: effectiveSampleRateHz,
-      nominalRateHz: generator.sampleRateHz,
+      referenceRateHz: generator.sampleRateHz,
     );
   }
 
@@ -366,14 +392,34 @@ class SimulatedEegSource implements EegSource, DemoControls {
   /// Emits on [qualityUpdates] only when the verdict changes, not on every
   /// 16 ms block: a consumer subscribing to a stream called "updates" wants
   /// the transitions, and the current value is always on [quality].
-  void _publishQuality(SignalQuality next) {
-    final changed = next.level != _quality.level ||
+  void _publishQuality(SignalQuality next, {bool force = false}) {
+    final changed = force ||
+        next.level != _quality.level ||
         !_sameFaults(next.faults, _quality.faults) ||
         !_samePadStates(next, _quality);
     _quality = next;
     if (changed && !_qualityController.isClosed) {
       _qualityController.add(next);
     }
+  }
+
+  /// True once, on the pump where the device first works out its own rate.
+  ///
+  /// The report has to go out even when nothing about its *level* changed. A
+  /// crystal 0.5% fast never crosses a quality band - it is not a fault, and
+  /// banding it as one is what the measured-rate work removed - but it is
+  /// still the difference between a notch on 60.000 Hz and a notch 0.3 Hz off
+  /// it, which is a fifth of the mains getting through. A consumer waiting to
+  /// re-tune has to hear about it, and comparing levels would have stayed
+  /// silent for exactly the rates worth hearing about.
+  bool _takeRateMeasurementAnnouncement() {
+    // A source that knew its crystal all along has no transition to announce,
+    // and emitting one would put a spurious report at the head of every
+    // quality stream in the app.
+    if (_rateMeasureDelaySeconds <= 0) return false;
+    if (_rateMeasureAnnounced || !rateMeasured) return false;
+    _rateMeasureAnnounced = true;
+    return true;
   }
 
   static bool _sameFaults(Set<SignalFault> a, Set<SignalFault> b) =>
@@ -543,6 +589,24 @@ class SimulatedEegSource implements EegSource, DemoControls {
   void setSampleRateError(double fraction) {
     _rateErrorFraction = fraction;
     _publishQuality(_report(0));
+  }
+
+  /// Withhold the measured rate for the first [seconds] of streaming, the way
+  /// a source that derives its rate from packet arrival times has to.
+  ///
+  /// The last fault the simulator could not express, and the one that arrives
+  /// with the radio rather than with a bad electrode. The crystal is off from
+  /// the very first sample - [_trueRateHz] never changes - but [rateMeasured]
+  /// is false and [effectiveSampleRateHz] reports the nominal until enough has
+  /// been streamed to work it out. A session that tuned itself at construction
+  /// and never looked again would spend the rest of its life analysing a
+  /// 261 Hz stream with a 256 Hz notch, which is precisely the failure the
+  /// measured-rate work exists to remove.
+  ///
+  /// Set before [start]. Zero restores a device that knows its own crystal.
+  void measureRateAfter(double seconds) {
+    _rateMeasureDelaySeconds = seconds;
+    _rateMeasureAnnounced = false;
   }
 
   @override

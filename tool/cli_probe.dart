@@ -20,7 +20,7 @@ import 'package:kore/sources/scenario_eeg_generator.dart';
   CognitiveLoadIndex cli,
   double seconds,
 ) {
-  final blocks = (seconds * DspConfig.framesPerSecond).round();
+  final blocks = (seconds * DspConfig.nominal.framesPerSecond).round();
   var sumCli = 0.0, sumTheta = 0.0, sumAlpha = 0.0;
   var n = 0;
 

@@ -15,12 +15,21 @@ import 'hann.dart';
 /// Runs on the host VM under `flutter test` with no native library and no
 /// Flutter binding, which is what makes the DSP directly testable.
 class DartDspEngine implements DspEngine {
+  @override
+  final DspConfig config;
+
+  /// [config] carries the rate the device is actually sampling at. Both
+  /// filters below are built from it rather than from a constant: the notch
+  /// is the one that matters, because it is tuned to a mains frequency that
+  /// is genuinely 60.000 Hz and a Q of 20 makes it narrow enough to miss.
+  DartDspEngine({this.config = DspConfig.nominal});
+
   final int _n = DspConfig.windowSize;
   final int _hop = DspConfig.hopSize;
 
-  final DcBlocker _dc = DcBlocker(fs: DspConfig.sampleRateHz);
+  late final DcBlocker _dc = DcBlocker(fs: config.sampleRateHz);
   late final Biquad _notch = Biquad.notch(
-    DspConfig.sampleRateHz,
+    config.sampleRateHz,
     DspConfig.mainsHz,
     DspConfig.mainsQ,
   );

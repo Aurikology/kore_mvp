@@ -65,7 +65,10 @@ class NativeDspEngine implements DspEngine {
   BandPowers? _pending;
   bool _disposed = false;
 
-  NativeDspEngine({String? libraryPath})
+  @override
+  final DspConfig config;
+
+  NativeDspEngine({String? libraryPath, this.config = DspConfig.nominal})
       : _lib = _open(libraryPath) {
     final abi = _lib.lookupFunction<_AbiC, _AbiD>('kore_dsp_abi_version');
     final version = abi();
@@ -87,10 +90,13 @@ class NativeDspEngine implements DspEngine {
     _destroy =
         _lib.lookupFunction<_VoidHandleC, _VoidHandleD>('kore_dsp_destroy');
 
-    // Bin ranges come from DspConfig so the Dart side stays the single
-    // source of truth for the analysis geometry.
+    // Geometry and rate both come from DspConfig so the Dart side stays the
+    // single source of truth. The rate was always a parameter of
+    // kore_dsp_create - the C++ port builds its DC blocker and its notch from
+    // whatever it is handed - so accommodating a real crystal needed nothing
+    // on the native side but for Dart to stop passing it a constant.
     _handle = _create(
-      DspConfig.sampleRateHz,
+      config.sampleRateHz,
       DspConfig.windowSize,
       DspConfig.hopSize,
       DspConfig.thetaBinLo,

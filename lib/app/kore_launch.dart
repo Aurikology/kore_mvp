@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../services/history_store.dart';
 import '../session/kore_session.dart';
+import '../sources/eeg_source.dart';
+import '../sources/eeg_source_factory.dart';
 import '../sources/simulated_eeg_source.dart';
 import '../theme/kore_theme.dart';
 import 'home_page.dart';
@@ -78,13 +80,29 @@ class _KoreLaunchState extends State<KoreLaunch> {
       // reads as a mock-up rather than as a device being found.
       _session = KoreSession(
         store: widget.store,
-        source: SimulatedEegSource(
-          scanDuration: const Duration(milliseconds: 1400),
-          connectDuration: const Duration(milliseconds: 900),
-        ),
+        source: _pairingSource(),
       );
       _phase = _Phase.pair;
     });
+  }
+
+  /// The radio if this build has one, and the simulator otherwise.
+  ///
+  /// The scan and connect delays only exist on the simulated path, and only
+  /// here: everywhere else in the codebase the simulated patch connects
+  /// instantly, which is what keeps the test suite free of pumping. A pairing
+  /// screen is the one place where instant is wrong - a scan that resolves in
+  /// one frame cannot be cancelled, and reads as a mock-up rather than as a
+  /// device being found. A real radio takes as long as it takes and needs no
+  /// help looking like it.
+  EegSource _pairingSource() {
+    final source = createEegSource();
+    if (source is! SimulatedEegSource) return source;
+    source.dispose();
+    return SimulatedEegSource(
+      scanDuration: const Duration(milliseconds: 1400),
+      connectDuration: const Duration(milliseconds: 900),
+    );
   }
 
   Future<void> _finishOnboarding() async {

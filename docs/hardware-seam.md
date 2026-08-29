@@ -219,19 +219,155 @@ simulated source otherwise, and the UI keeps saying which, out loud.
    take nothing at all. Those are four different right answers, and one enum
    value could only have expressed one of them. See `docs/signal-quality.md`.
 
-3. Make `DspEngine` take its sample rate rather than reading a constant, and
-   keep the Dart and C++ paths at parity while doing it. **Still open.** The
-   source measures and reports its rate, and the quality path already bands
-   drift as degraded and unusable — but the engine is still built against the
-   256.0 Hz constant, so a real crystal is currently *detected* rather than
-   *accommodated*.
+3. ~~Make `DspEngine` take its sample rate rather than reading a constant~~ —
+   **done**, and the C++ port turned out to need no change at all. The rate was
+   always a parameter of `kore_dsp_create`, which builds its DC blocker and its
+   notch from whatever it is handed; only the Dart half was passing it a
+   constant. Parity is now checked at 261.12 Hz as well as at 256, and it
+   passes against a DLL built before the change — which is the cleanest
+   evidence available that the native side was right all along.
 
-4. Only then, the radio. The platform-code decision it depends on is
-   **taken**: `lib/services/kore_platform.dart` is an in-repo `MethodChannel`
-   with a Kotlin host, no pub package, and an inert fallback everywhere else.
-   What remains for BLE is the radio itself, not the argument about how to
-   reach it.
+   `DspConfig` splits into geometry and rate. The window, the hop, the bin
+   edges and the mains notch stay static: they are design decisions, identical
+   on every device. The rate arrives from the source at runtime, and
+   `KoreSession` builds the engine, the index, the predictor and the quality
+   gate against that one answer, so nothing can be counting frames at 4 Hz
+   while the engine frames at 4.08.
+
+   Two things came out of this that were not in the sketch above.
+
+   **How much the notch was actually worth.** On a unit-amplitude 60 Hz mains
+   tone, an engine tuned to the real rate leaves 0.00019. One built against
+   256 Hz while the device samples at 261.12 leaves 0.53920 — over half the
+   mains survives a filter whose entire purpose is removing it. Even 0.5% of
+   rate error, ordinary for an uncompensated oscillator, lets a fifth through.
+   The estimate above called this "not small" and understated it.
+
+   **Accommodating a rate has to *retire* the fault for it.** This is the half
+   that makes the change do anything. The quality path banded drift against the
+   256 Hz constant, so a headset whose crystal steadily ran at 261.12 Hz
+   reported `sampleRateDrift` on every block, the gate refused every frame, and
+   it could never finish calibrating — a perfectly good device, permanently
+   unusable. Tuning the engine to it without also moving what drift is measured
+   against would have fixed the arithmetic and left the app just as broken.
+   `SignalQuality.nominalRateHz` is now `referenceRateHz`, meaning the rate the
+   analysis is tuned to; the source fills it with its own nominal, because that
+   is all it can know, and `SignalQualityGate` re-references it to the engine's
+   actual tuning. The gate is the only place both numbers exist, and
+   re-referencing is the same translation it already performs for the analysis
+   window.
+
+   What remains a fault, correctly, is the crystal moving *away* from the
+   tuning — a real detuning that grows with temperature.
+
+   **Drift during a session is still not followed.** A crystal that warms up
+   and walks off the rate it was tuned to is detected and banded, not chased.
+   That one genuinely does need a radio that warms up: chasing it means
+   swapping IIR coefficients under live filter state, which rings.
+
+3b. ~~A source that cannot report its rate until it has streamed~~ — **done**,
+   and it was not the same problem as drift, which is why it did not need the
+   radio.
+
+   Tuning at construction assumed the source could answer *before it had
+   streamed*. A source that knows its own crystal can. A BLE source measuring
+   its rate from packet arrival times cannot: it would report its nominal at
+   construction and learn the truth some seconds later — by which point the
+   engine was built, and the gate would band the difference as drift and
+   suppress every frame. Exactly the failure step 3 removed, re-entering
+   through the door the radio walks in by.
+
+   The fix has three parts.
+
+   `EegSource.rateMeasured` says whether `effectiveSampleRateHz` is a
+   measurement or a nominal standing in for one — the same distinction
+   `SignalQuality.contactMeasured` already draws, and needed for the same
+   reason: without it the session cannot tell *this device runs at 256 Hz*
+   from *this device has not looked yet*, and those two want opposite
+   behaviour.
+
+   `SimulatedEegSource.measureRateAfter` models it, which was the last fault
+   the simulator could not express. The crystal is off from the very first
+   sample — the pump runs off the true rate throughout — while the *reported*
+   rate stays nominal until enough has been streamed. A simulator that also
+   slowed its delivery to match the nominal it was claiming would agree with
+   itself and with nothing else, which is the same trap the drift lever
+   already avoids.
+
+   `KoreSession` rebuilds the analysis when the measurement lands. **Rebuilds,
+   not retunes** — and that is what makes this cheap where following drift is
+   not. A fresh engine starts with an empty ring, so it cannot emit a frame
+   until a full window has arrived at the new tuning; there is no
+   discontinuity to settle because there is nothing on the far side of one, and
+   so no `SignalQualityGate.contaminate` is needed. It happens at most once,
+   and only before a baseline exists. A measurement arriving after calibration
+   is refused rather than honoured: rebuilding then would either discard a
+   capture the user waited fifteen seconds for, or keep one taken through a
+   misplaced notch. Refusing degrades to banding the difference as drift, which
+   is the pre-existing behaviour and is honest rather than silent. A source
+   measures its rate in seconds and calibration takes fifteen, so arriving that
+   late is not the case this is for.
+
+   One consequence worth noting: the profile loaded from disk is now held as
+   well as adopted, because a rebuilt index with a fresh profile would silently
+   drop the user's own thresholds and read as a first-ever session.
+
+   **What this leaves for step 4:** nothing about rates. A BLE source may
+   report its crystal whenever it can, including never, and the session copes.
+
+4. The radio. **The Dart half is done; the Kotlin host is not.**
+
+   The split is the useful part, and it is what makes any of this checkable
+   before there is a patch. Everything that can be got wrong in a way nobody
+   notices is in Dart — the link state machine, gap counting, rate measurement,
+   quality reporting — and all of it runs on the host VM against a fake
+   channel. What is left below the channel is scan, connect, subscribe,
+   forward bytes: the part a device either does or does not do, and the part
+   no test on this machine could tell the truth about anyway.
+
+   `lib/services/kore_ble.dart` is the channel, copied from
+   `kore_platform.dart` deliberately — one `MethodChannel` out for commands,
+   one `EventChannel` in for notifications and link transitions, nothing in
+   `pubspec.yaml`, and `InertKoreBle` everywhere there is no host so the
+   desktop build carries no conditionals. Two channels rather than one is the
+   only departure: notifications arrive at the packet rate and carry binary
+   payloads, and an `EventChannel` is a stream in that direction rather than a
+   round trip with a reply nobody reads. Payloads and transitions share the
+   stream so they stay *ordered* — a `reconnecting` overtaking the last packets
+   before a drop would clear the sample index while packets from the old stream
+   were still in flight.
+
+   `lib/sources/ble_eeg_source.dart` is the source. `createEegSource()` is
+   `createDspEngine()` in a different costume: BLE if the platform has one,
+   simulated otherwise. The difference is what the fallback *means* — a missing
+   native DSP costs speed, a missing radio costs the measurement — so this
+   fallback is never silent, and `demo` returning null is what makes the demo
+   panel vanish on a real patch instead of shipping a "Simulate detached
+   electrode" button to somebody wearing one.
+
+   **The wire format had to be replaced, and that is the finding.**
+   `EEGSample.fromBLEBytes` pinned a per-sample format before there was
+   firmware, which was the right instinct — but it predates steps 1 and 2 and
+   could not carry what the widened seam asks for. A notification has to report
+   where its samples sat in the device's own stream, because `SampleBlock`
+   takes `firstSampleIndex` so a gap is *counted* rather than guessed, and it
+   has to report per-pad contact, because nothing in the DSP can recover that:
+   a detached electrode produces a genuinely elevated theta/alpha ratio rather
+   than silence. Neither is a property of one sample, so neither had anywhere
+   to go. `KorePacket` is the replacement, and the old pair is deleted — it had
+   no caller and, contrary to its own doc comment, no test, so it was not a
+   pinned contract but a second answer for a firmware author to find beside the
+   real one.
+
+   A packet that cannot be trusted is refused whole rather than decoded
+   partway: a short block that looks complete is invisible downstream, and the
+   *next* packet reports the gap exactly through its own index.
+
+   **What remains:** `android/.../KoreBlePlugin.kt`, and a patch to point it
+   at. Nothing on this machine can verify that half, and no test here should
+   be read as claiming otherwise.
 
 Steps 1 to 3 are entirely app-side, are testable today, and are the difference
 between hardware being a drop-in and hardware being a rewrite — which is the
-claim the seam exists to make true.
+claim the seam exists to make true. All three are now done, and nothing left
+on this list can be built without a radio.
