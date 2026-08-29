@@ -185,6 +185,20 @@ void main() {
           42);
     });
 
+    test('a byte that cannot be a percentage is not shown as one', () {
+      // The other input path in this repo already refuses the whole range;
+      // shipping two answers for one field is how a pairing screen ends up
+      // reading "KORE patch - 254%".
+      final bytes = _packet(battery: 50).encode();
+      for (final raw in [101, 150, 254, 255]) {
+        expect(KorePacket.decode(_withByte(bytes, 9, raw), 0)!.batteryPercent,
+            isNull,
+            reason: 'battery byte $raw');
+      }
+      expect(KorePacket.decode(_withByte(bytes, 9, 100), 0)!.batteryPercent, 100);
+      expect(KorePacket.decode(_withByte(bytes, 9, 0), 0)!.batteryPercent, 0);
+    });
+
     test('an unreported battery is null, not zero', () {
       // A fabricated reading is a worse answer than an absent one, and a zero
       // here would render as a flat patch on the pairing screen.
@@ -279,7 +293,7 @@ void main() {
   test('decoding reads from a view, not from offset zero of its buffer', () {
     // A BLE stack hands up a view into a larger receive buffer. A decoder
     // using ByteData.view(bytes.buffer) alone reads the wrong bytes and is
-    // very hard to see - the same trap EEGSample.fromBLEBytes documents.
+    // very hard to see - the same trap the old fromBLEBytes documented.
     final packet = _packet(firstSampleIndex: 777, sampleCount: 4);
     final encoded = packet.encode();
 

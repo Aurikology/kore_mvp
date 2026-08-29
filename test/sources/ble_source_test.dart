@@ -437,6 +437,54 @@ void main() {
       expect(source.effectiveSampleRateHz, closeTo(256.0, 1.0));
     });
 
+    test('a lost notification does not read as a slow crystal', () async {
+      // The measurement divides samples by wall clock, and the crystal kept
+      // ticking through the packets that never arrived. Counting only what
+      // survived the air biases the answer low by exactly the loss fraction -
+      // one packet in seventeen reads as a 6% slow crystal, which is inside
+      // the plausibility band, so it is believed rather than refused, and the
+      // session spends its one rebuild tuning a 60 Hz notch to 63.75 Hz.
+      // Nothing downstream can catch it: the gate re-references drift to
+      // whatever the engine was tuned to, so the error reads as zero drift.
+      await source.start();
+
+      var index = 0;
+      for (var i = 0; i < BleEegSource.kPacketsToMeasureRate + 2; i++) {
+        // Slot 5 is lost on air: the device produced it, the index skips it.
+        if (i != 5) ble.deliver(_payload(firstSampleIndex: index));
+        await _settle();
+        index += 64;
+        clock.advance(const Duration(microseconds: 250000));
+      }
+
+      expect(source.rateMeasured, isTrue);
+      expect(source.effectiveSampleRateHz, closeTo(256.0, 1.0),
+          reason: 'the device produced 256 Hz throughout; only the radio '
+              'lost some of it');
+    });
+
+    test('a packet lost to corruption is counted the same way', () async {
+      // An undecodable packet produces no block, so the count of what the
+      // device produced has to come from the *next* packet's index. Same
+      // arithmetic, different loss mechanism.
+      await source.start();
+
+      var index = 0;
+      for (var i = 0; i < BleEegSource.kPacketsToMeasureRate + 2; i++) {
+        if (i == 5) {
+          ble.deliver(Uint8List.fromList([9, 9, 9]));
+        } else {
+          ble.deliver(_payload(firstSampleIndex: index));
+        }
+        await _settle();
+        index += 64;
+        clock.advance(const Duration(microseconds: 250000));
+      }
+
+      expect(source.rateMeasured, isTrue);
+      expect(source.effectiveSampleRateHz, closeTo(256.0, 1.0));
+    });
+
     test('a reconnect withdraws the measurement rather than keeping it',
         () async {
       await source.start();
@@ -467,6 +515,28 @@ void main() {
       }
       expect(source.rateMeasured, isTrue);
       expect(source.effectiveSampleRateHz, closeTo(256.0, 1.0));
+    });
+  });
+
+  group('lifecycle', () {
+    test('a start racing a stop is not stamped back to idle', () async {
+      // stop() clears the subscriptions before awaiting the disconnect, so a
+      // start() arriving during that await legitimately re-subscribes and
+      // re-scans. Publishing idle after the await would stamp it over a link
+      // that had just come back, leaving the screen idle while packets flowed.
+      await source.start();
+      final stopping = source.stop();
+      await source.start();
+      await stopping;
+
+      expect(source.link.state, SourceLinkState.scanning,
+          reason: 'the later start is the live one');
+    });
+
+    test('start is idempotent', () async {
+      await source.start();
+      await source.start();
+      expect(ble.calls.where((c) => c == 'startScan').length, 1);
     });
   });
 

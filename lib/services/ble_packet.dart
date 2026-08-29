@@ -6,9 +6,10 @@ import 'signal_quality.dart';
 /// One BLE notification from the patch, decoded.
 ///
 /// This is the contract the firmware has to meet, written down before there is
-/// firmware - the same reason [EEGSample.fromBLEBytes] exists. What is new is
-/// *what* has to be in it, because the old per-sample format predates the
-/// widened `EegSource` and can no longer carry what the seam asks for.
+/// firmware - the same instinct behind the per-sample `fromBLEBytes` this
+/// replaces. What is new is *what* has to be in it, because that format
+/// predates the widened `EegSource` and could not carry what the seam asks
+/// for.
 ///
 /// `docs/hardware-seam.md` named three things a real link has to express, and
 /// two of them are properties of a *packet*, not of a sample:
@@ -40,7 +41,8 @@ import 'signal_quality.dart';
 ///   2       2     sampleCount      u16
 ///   4       4     firstSampleIndex u32  - device-side, monotonic
 ///   8       1     padCount         u8
-///   9       1     battery          u8   - 0-100, or 0xFF for "not measured"
+///   9       1     battery          u8   - 0-100; anything above is "not
+///                                            measured", 0xFF by convention
 ///   10      2     reserved         u16  - must be zero
 ///   12      ...   pads             padCount x { contact u8, impedance u16 }
 ///           ...   samples          sampleCount x channelCount x i16
@@ -71,6 +73,14 @@ class KorePacket {
   static const int headerBytes = 12;
 
   static const int _padBytes = 3;
+  /// Anything outside 0-100 means the same as absent.
+  ///
+  /// `0xFF` is the documented sentinel, but it is not the only byte that
+  /// cannot be a percentage, and the other input path in this repo -
+  /// `BleLinkEvent.fromMap` - already refuses the whole range. Shipping two
+  /// answers for one field is how a pairing screen ends up reading
+  /// "KORE patch - 254%".
+  static const int _batteryMax = 100;
   static const int _batteryAbsent = 0xFF;
   static const int _contactAbsent = 0xFF;
   static const int _impedanceAbsent = 0xFFFF;
@@ -194,7 +204,7 @@ class KorePacket {
       firstSampleIndex: firstSampleIndex,
       samples: samples,
       electrodes: electrodes,
-      batteryPercent: batteryRaw == _batteryAbsent ? null : batteryRaw,
+      batteryPercent: batteryRaw > _batteryMax ? null : batteryRaw,
     );
   }
 

@@ -104,6 +104,26 @@ abstract class KoreBle {
   void dispose();
 }
 
+/// Whether an Android host for `kore/ble` is installed in this build.
+///
+/// **False, because there is not one yet.** `MainActivity.kt` registers
+/// `kore/platform` and nothing else; the Kotlin half of the radio is the piece
+/// step 4 still owes.
+///
+/// This is a constant rather than a probe because the choice has to be made
+/// synchronously, in [createKoreBle], before a `KoreSession` exists - and a
+/// channel cannot be asked whether anyone is listening without awaiting a
+/// round trip. Every asynchronous answer arrives after the decision.
+///
+/// It is here, named, rather than left implicit in a commented-out branch,
+/// because the alternative was worse: [AndroidKoreBle.isSupported] returning a
+/// hardcoded `true` claimed a host that does not exist, `createEegSource()`
+/// believed it, and every Android build got a [BleEegSource] wired to nothing.
+/// The app would have shown a pairing screen that scanned forever - not a
+/// crash, not a log line, just a device that never appears. Flip this the day
+/// the Kotlin lands, in the same commit.
+const bool kAndroidBleHostInstalled = false;
+
 /// Returns the radio channel if this build has a host for it, and an inert one
 /// otherwise.
 ///
@@ -112,6 +132,7 @@ abstract class KoreBle {
 /// without a single platform conditional of its own.
 KoreBle createKoreBle() {
   if (kIsWeb) return const InertKoreBle();
+  if (!kAndroidBleHostInstalled) return const InertKoreBle();
   try {
     if (Platform.isAndroid) return AndroidKoreBle();
   } catch (e) {

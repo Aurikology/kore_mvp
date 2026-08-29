@@ -142,16 +142,22 @@ class BleEegSource implements EegSource {
 
   @override
   Future<void> stop() async {
-    await _packets?.cancel();
+    final packets = _packets;
+    final events = _events;
     _packets = null;
-    await _events?.cancel();
     _events = null;
     _resetStreamState();
-    try {
-      await _ble.disconnect();
-    } finally {
-      _publishLink(SourceLink.idle);
-    }
+
+    // Published before the await, not after it. `stop()` nulls the
+    // subscriptions first, so a `start()` arriving during the disconnect sees
+    // an idle source and legitimately re-subscribes and re-scans - and a
+    // `finally` running afterwards would then stamp `idle` over a link that
+    // had just come back, leaving the screen idle while packets flowed.
+    _publishLink(SourceLink.idle);
+
+    await packets?.cancel();
+    await events?.cancel();
+    await _ble.disconnect();
   }
 
   @override
@@ -241,7 +247,9 @@ class BleEegSource implements EegSource {
             _expectedSampleIndex!, packet.firstSampleIndex);
     _expectedSampleIndex = packet.nextSampleIndex;
 
-    _accumulateRate(arrivedAt, packet.length);
+    // The samples the *device produced* over this interval, not the ones that
+    // survived the air. See [_accumulateRate].
+    _accumulateRate(arrivedAt, packet.length + dropped);
 
     final quality = SignalQuality.fromElectrodes(
       electrodes: packet.electrodes,
@@ -272,6 +280,22 @@ class BleEegSource implements EegSource {
   /// *samples* rather than packets is what makes it a sample-rate measurement:
   /// a device that coalesces two notifications into one still delivered the
   /// same number of samples in the same interval.
+  ///
+  /// [samples] is what the device *produced*, so it includes samples that were
+  /// lost on the way here. This is the whole correctness of the measurement and
+  /// it is easy to get backwards. The interval is wall clock, and the crystal
+  /// kept ticking through a dropped notification; counting only what arrived
+  /// divides the survivors by the time it took to send all of them, and the
+  /// answer is low by exactly the loss fraction. One notification lost in four
+  /// seconds reads as a 6% slow crystal - comfortably inside the plausibility
+  /// band, so it is believed rather than refused, and
+  /// `KoreSession._retuneToMeasuredRate` spends its one rebuild tuning a
+  /// 60 Hz notch to 63.75 Hz. Nothing downstream can catch it either: the gate
+  /// re-references drift to whatever the engine was tuned to, so the error
+  /// reads as zero drift.
+  ///
+  /// The correction costs nothing, because the count of missing samples is
+  /// exactly what `firstSampleIndex` is on the wire for.
   void _accumulateRate(int arrivedAtMicros, int samples) {
     if (_rateWindowStartMicros == null) {
       // The first packet starts the clock and contributes no samples to it:
