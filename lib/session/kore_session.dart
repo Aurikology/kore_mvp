@@ -13,7 +13,7 @@ import '../services/history_store.dart';
 import '../services/signal_quality.dart';
 import '../sources/demo_controls.dart';
 import '../sources/eeg_source.dart';
-import '../sources/simulated_eeg_source.dart';
+import '../sources/eeg_source_factory.dart';
 import '../sources/source_link.dart';
 import 'kore_history.dart';
 import 'reset_record.dart';
@@ -148,7 +148,7 @@ class KoreSession extends ChangeNotifier {
     DspEngine? engine,
     this.store,
     DateTime Function()? now,
-  })  : source = source ?? SimulatedEegSource(),
+  })  : source = source ?? createEegSource(),
         now = now ?? DateTime.now {
     _ownsEngine = engine == null;
     _engine = engine ?? createDspEngine(config: _tuningFor(this.source));

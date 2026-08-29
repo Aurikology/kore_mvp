@@ -315,11 +315,57 @@ simulated source otherwise, and the UI keeps saying which, out loud.
    **What this leaves for step 4:** nothing about rates. A BLE source may
    report its crystal whenever it can, including never, and the session copes.
 
-4. Only then, the radio. The platform-code decision it depends on is
-   **taken**: `lib/services/kore_platform.dart` is an in-repo `MethodChannel`
-   with a Kotlin host, no pub package, and an inert fallback everywhere else.
-   What remains for BLE is the radio itself, not the argument about how to
-   reach it.
+4. The radio. **The Dart half is done; the Kotlin host is not.**
+
+   The split is the useful part, and it is what makes any of this checkable
+   before there is a patch. Everything that can be got wrong in a way nobody
+   notices is in Dart — the link state machine, gap counting, rate measurement,
+   quality reporting — and all of it runs on the host VM against a fake
+   channel. What is left below the channel is scan, connect, subscribe,
+   forward bytes: the part a device either does or does not do, and the part
+   no test on this machine could tell the truth about anyway.
+
+   `lib/services/kore_ble.dart` is the channel, copied from
+   `kore_platform.dart` deliberately — one `MethodChannel` out for commands,
+   one `EventChannel` in for notifications and link transitions, nothing in
+   `pubspec.yaml`, and `InertKoreBle` everywhere there is no host so the
+   desktop build carries no conditionals. Two channels rather than one is the
+   only departure: notifications arrive at the packet rate and carry binary
+   payloads, and an `EventChannel` is a stream in that direction rather than a
+   round trip with a reply nobody reads. Payloads and transitions share the
+   stream so they stay *ordered* — a `reconnecting` overtaking the last packets
+   before a drop would clear the sample index while packets from the old stream
+   were still in flight.
+
+   `lib/sources/ble_eeg_source.dart` is the source. `createEegSource()` is
+   `createDspEngine()` in a different costume: BLE if the platform has one,
+   simulated otherwise. The difference is what the fallback *means* — a missing
+   native DSP costs speed, a missing radio costs the measurement — so this
+   fallback is never silent, and `demo` returning null is what makes the demo
+   panel vanish on a real patch instead of shipping a "Simulate detached
+   electrode" button to somebody wearing one.
+
+   **The wire format had to be replaced, and that is the finding.**
+   `EEGSample.fromBLEBytes` pinned a per-sample format before there was
+   firmware, which was the right instinct — but it predates steps 1 and 2 and
+   could not carry what the widened seam asks for. A notification has to report
+   where its samples sat in the device's own stream, because `SampleBlock`
+   takes `firstSampleIndex` so a gap is *counted* rather than guessed, and it
+   has to report per-pad contact, because nothing in the DSP can recover that:
+   a detached electrode produces a genuinely elevated theta/alpha ratio rather
+   than silence. Neither is a property of one sample, so neither had anywhere
+   to go. `KorePacket` is the replacement, and the old pair is deleted — it had
+   no caller and, contrary to its own doc comment, no test, so it was not a
+   pinned contract but a second answer for a firmware author to find beside the
+   real one.
+
+   A packet that cannot be trusted is refused whole rather than decoded
+   partway: a short block that looks complete is invisible downstream, and the
+   *next* packet reports the gap exactly through its own index.
+
+   **What remains:** `android/.../KoreBlePlugin.kt`, and a patch to point it
+   at. Nothing on this machine can verify that half, and no test here should
+   be read as claiming otherwise.
 
 Steps 1 to 3 are entirely app-side, are testable today, and are the difference
 between hardware being a drop-in and hardware being a rewrite — which is the
