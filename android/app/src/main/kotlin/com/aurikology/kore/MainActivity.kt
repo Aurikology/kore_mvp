@@ -10,6 +10,7 @@ import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.renderer.FlutterUiDisplayListener
+import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 
@@ -30,6 +31,16 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
 
     private var channel: MethodChannel? = null
+
+    /** `kore/ble`, commands out. Two methods: `startScan` and `disconnect`. */
+    private var bleChannel: MethodChannel? = null
+
+    /**
+     * `kore/ble/stream`, notifications and link transitions in - one stream and
+     * not two, because their ordering with respect to each other is what stops
+     * a `reconnecting` overtaking the last packets of the stream it ends.
+     */
+    private var bleEvents: EventChannel? = null
 
     /**
      * The unanswered `requestNotificationPermission`, held across the system
@@ -68,6 +79,36 @@ class MainActivity : FlutterActivity() {
                 override fun onFlutterUiNoLongerDisplayed() = Unit
             },
         )
+
+        // The radio, wired the same way and in the same place. No display
+        // listener for this one: an `EventChannel` reports its own listener
+        // through `onListen`, which is a stronger claim than a rendered frame,
+        // and `KoreBleHost` latches its last link transition for a sink that
+        // subscribes after it.
+        val bleCommands = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "kore/ble",
+        )
+        bleCommands.setMethodCallHandler(KoreBleHost::onMethodCall)
+        bleChannel = bleCommands
+
+        val bleStream = EventChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "kore/ble/stream",
+        )
+        bleStream.setStreamHandler(KoreBleHost)
+        bleEvents = bleStream
+
+        KoreBleHost.attach(this)
+
+        // `kAndroidBleHostInstalled` in `lib/services/kore_ble.dart` is still
+        // false, deliberately, and this host does not flip it. The flag is what
+        // `createEegSource()` reads, so flipping it takes the simulated source
+        // off Android entirely - and the README leans on that demo. Turning it
+        // on is a product decision about what an Android build *is*, not a
+        // consequence of the Kotlin existing, so it is left to the repo owner
+        // to make in its own commit. Until then this registration is live and
+        // unreached: Dart never opens either channel.
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
@@ -77,6 +118,18 @@ class MainActivity : FlutterActivity() {
         KoreActions.detach()
         channel?.setMethodCallHandler(null)
         channel = null
+        // Same order, same reason, one rung further: the host drops its sink,
+        // stops any scan and closes the GATT *before* the channels it would
+        // speak on are unhooked, so nothing is emitted onto a messenger whose
+        // engine is going away. Closing the GATT here rather than holding it is
+        // deliberate - an unclosed `BluetoothGatt` keeps one of the system's
+        // few client interfaces forever, and there is no foreground service to
+        // make an outliving link worth anything.
+        KoreBleHost.detach()
+        bleEvents?.setStreamHandler(null)
+        bleEvents = null
+        bleChannel?.setMethodCallHandler(null)
+        bleChannel = null
         // A Future that never completes is worse than one that answers false:
         // `StrainNotifier.requestPermission()` awaits this, and a permanently
         // pending await is a permission state the app can never leave.
@@ -194,14 +247,26 @@ class MainActivity : FlutterActivity() {
         // super first: the embedding forwards this to the plugin registry, and
         // intercepting it before that would break anything else that asks.
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode != REQUEST_POST_NOTIFICATIONS) return
-        val pending = permissionResult ?: return
-        permissionResult = null
-        // An empty grantResults means the request was cancelled, which is a
-        // refusal as far as the app is concerned.
-        pending.success(
-            grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED,
-        )
+        when (requestCode) {
+            REQUEST_POST_NOTIFICATIONS -> {
+                val pending = permissionResult ?: return
+                permissionResult = null
+                // An empty grantResults means the request was cancelled, which
+                // is a refusal as far as the app is concerned.
+                pending.success(
+                    grantResults.isNotEmpty() &&
+                        grantResults[0] == PackageManager.PERMISSION_GRANTED,
+                )
+            }
+
+            // Forwarded rather than answered here: the BLE answer is not a
+            // `MethodChannel.Result` at all. `startScan` was already completed
+            // before the dialog went up, so a denial has to travel up the event
+            // stream as a `failed` with a sentence on it, and only the host
+            // knows what it was about to do next.
+            KoreBleHost.REQUEST_PERMISSIONS ->
+                KoreBleHost.onPermissionsResult(permissions, grantResults)
+        }
     }
 
     /**
