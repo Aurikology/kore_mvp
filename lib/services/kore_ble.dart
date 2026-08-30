@@ -104,24 +104,37 @@ abstract class KoreBle {
   void dispose();
 }
 
-/// Whether an Android host for `kore/ble` is installed in this build.
+/// Whether an Android build should reach for the radio.
 ///
-/// **False, because there is not one yet.** `MainActivity.kt` registers
-/// `kore/platform` and nothing else; the Kotlin half of the radio is the piece
-/// step 4 still owes.
+/// **False, and no longer because the host is missing.** `KoreBleHost.kt`
+/// exists and `MainActivity` registers `kore/ble` and `kore/ble/stream`. This
+/// now records a different decision, and it is a decision about the product
+/// rather than about the code.
 ///
-/// This is a constant rather than a probe because the choice has to be made
+/// Flipping it sends every Android build to the radio, and there is no patch to
+/// find. What the phone build *is* today is the working prototype the README
+/// describes - the simulated signal, the demo panel, the whole detect-and-reset
+/// loop, on a device someone can hold. Turning this on trades that for a
+/// pairing screen that scans for twenty seconds and then honestly reports that
+/// no patch was found. That is the correct behaviour once hardware exists and
+/// the wrong default until it does.
+///
+/// It also cannot be flipped on this evidence. Everything below the channel is
+/// verified by compiling, which proves the Kotlin is well-typed and proves
+/// nothing about whether it drives a radio. The flip belongs in its own commit,
+/// alongside a scan that found a patch on a real phone - a green build is the
+/// producer's word for it, and this is a claim only the consumer can settle.
+///
+/// A constant rather than a probe because the choice has to be made
 /// synchronously, in [createKoreBle], before a `KoreSession` exists - and a
-/// channel cannot be asked whether anyone is listening without awaiting a
-/// round trip. Every asynchronous answer arrives after the decision.
+/// channel cannot be asked whether anyone is listening without awaiting a round
+/// trip. Every asynchronous answer arrives after the decision.
 ///
-/// It is here, named, rather than left implicit in a commented-out branch,
-/// because the alternative was worse: [AndroidKoreBle.isSupported] returning a
-/// hardcoded `true` claimed a host that does not exist, `createEegSource()`
-/// believed it, and every Android build got a [BleEegSource] wired to nothing.
-/// The app would have shown a pairing screen that scanned forever - not a
-/// crash, not a log line, just a device that never appears. Flip this the day
-/// the Kotlin lands, in the same commit.
+/// It is here, named, rather than implicit in a commented-out branch, because
+/// the alternative was worse: [AndroidKoreBle.isSupported] returning a
+/// hardcoded `true` claimed a host that did not exist, `createEegSource()`
+/// believed it, and every Android build got a [BleEegSource] wired to nothing -
+/// not a crash, not a log line, just a device that never appears.
 const bool kAndroidBleHostInstalled = false;
 
 /// Returns the radio channel if this build has a host for it, and an inert one

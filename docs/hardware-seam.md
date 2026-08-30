@@ -363,9 +363,43 @@ simulated source otherwise, and the UI keeps saying which, out loud.
    partway: a short block that looks complete is invisible downstream, and the
    *next* packet reports the gap exactly through its own index.
 
-   **What remains:** `android/.../KoreBlePlugin.kt`, and a patch to point it
-   at. Nothing on this machine can verify that half, and no test here should
-   be read as claiming otherwise.
+   **The Kotlin host now exists too** - `android/.../KoreBleHost.kt`, with
+   `MainActivity` registering `kore/ble` and `kore/ble/stream` beside the
+   notification channel, and the Bluetooth permissions in the manifest for both
+   the API 31+ and the legacy eras. No Gradle dependency: `android.bluetooth.*`
+   directly, the same constraint that keeps `pubspec.yaml` empty.
+
+   It is a pipe, and that is enforced rather than intended. It scans, connects,
+   negotiates an MTU, writes the CCCD descriptor, forwards bytes and reports
+   link state. It does not parse `KorePacket`, count gaps or measure a rate -
+   all of which live in Dart, where they are tested.
+
+   Three things about it are worth keeping in mind, because each is a silent
+   failure rather than a loud one:
+
+   - **Payloads and transitions must cost the same number of hops to the sink.**
+     They share one stream so they stay ordered, and the host delivers a
+     transition inline when it is already on the main thread rather than posting
+     it again. Posting twice put every transition a queue position behind the
+     notifications around it, so Dart cleared its expected sample index behind
+     packets belonging to the stream that index described.
+   - **A GATT that is being torn down is not a live link.** The graceful stop
+     keeps the object alive so the disconnect callback can close it, which
+     leaves the field non-null for two seconds while nothing is connected.
+     Treating that as "already connected" swallowed the scan that Cancel-then-
+     Try-again asks for, and said nothing about it.
+   - **A late callback must not forge `streaming`.** A battery read is fired the
+     instant notifications are enabled; if the patch walks out of range before
+     answering, the disconnect arrives first and the read second. Without an
+     identity check it re-emitted `streaming` after `reconnecting` - the one
+     state in which a number on screen means anything.
+
+   **What remains is a patch.** `kAndroidBleHostInstalled` is still false, and
+   that constant now records a product decision rather than a missing file: an
+   Android build is the simulated prototype until there is hardware to find, and
+   the flip belongs in a commit that can show a scan finding a real one.
+   Compiling proves the Kotlin is well-typed. Nothing here has talked to a
+   radio, and no test in this repo should be read as claiming otherwise.
 
 Steps 1 to 3 are entirely app-side, are testable today, and are the difference
 between hardware being a drop-in and hardware being a rewrite — which is the

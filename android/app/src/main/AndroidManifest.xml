@@ -1,10 +1,45 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <!-- API 33+ only. Below it the OS grants posting by default, which is why
          the host answers `requestNotificationPermission` with
          `areNotificationsEnabled()` there rather than with a request. Declared
          even so: the permission is harmless on older releases and its absence
          on 33+ makes the request silently deny. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+
+    <!-- API 31+, both asked for at runtime together. `neverForLocation` is an
+         assertion rather than a hint: it says KORE never derives the user's
+         position from a scan result, which is true - the only thing
+         `KoreBleHost` does with one is connect to it - and it is what lets the
+         scan run on 31+ without a location permission at all. Without the flag
+         the platform demands location as well, and a user declining that reads
+         as a patch that simply never appears. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation"
+        tools:targetApi="s"/>
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
+
+    <!-- Below 31, where `minSdk` 24 means half the ways this app can be
+         installed. BLUETOOTH and BLUETOOTH_ADMIN are install-time and granted
+         by their presence here; ACCESS_FINE_LOCATION is the one the user has to
+         be asked for, because a pre-31 BLE scan is legally a location
+         capability - and coarse is not enough, since a coarse-only grant on
+         29-30 yields a scan that returns nothing with no error at all. Capped
+         at 30 so a modern install does not carry a location permission it can
+         never use. -->
+    <uses-permission android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30"/>
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN"
+        android:maxSdkVersion="30"/>
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"
+        android:maxSdkVersion="30"/>
+
+    <!-- Not required: a phone with no LE radio still installs and still runs,
+         because `createEegSource()` falls back to the simulated source. Marking
+         it required would hide the app on Play from devices that can run all of
+         it except the patch. -->
+    <uses-feature android:name="android.hardware.bluetooth_le"
+        android:required="false"/>
     <application
         android:label="KORE"
         android:name="${applicationName}"

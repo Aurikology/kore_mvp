@@ -28,12 +28,13 @@ Future<void> _hostErrors(String code, String message) async {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  group('there is no Android host yet, and the app must know it', () {
+  group('the Android build does not reach for the radio yet', () {
     test('the flag says so, in one place, by name', () {
-      // MainActivity.kt registers `kore/platform` and nothing else. Flipping
-      // this without the Kotlin would give every Android build a BleEegSource
-      // wired to nothing: no crash, no log line, just a pairing screen that
-      // scans forever.
+      // The Kotlin host now exists, so this no longer records its absence. It
+      // records that an Android build is still the simulated prototype: there
+      // is no patch to find, and the flip belongs in a commit that can show a
+      // scan finding one on a real phone. Compiling proves the host is
+      // well-typed and proves nothing about whether it drives a radio.
       expect(kAndroidBleHostInstalled, isFalse);
     });
 

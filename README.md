@@ -24,7 +24,7 @@ simulated.**
 | Simulated EEG source | Implemented, with the link and every fault it can have |
 | Native C++/FFI DSP path | Implemented on Windows and Android; parity-tested against Dart at 256 Hz and off-nominal |
 | Suspend and resume | Implemented; a gap is refused, never spliced |
-| BLE / real hardware | Dart half implemented and tested against a fake channel: packet format, link states, gap counting, measured rate. The Kotlin host and a patch to point it at are what remain, and nothing here has touched a radio |
+| BLE / real hardware | Both halves written - Dart tested against a fake channel, Kotlin host compiled into the APK. Off by default (`kAndroidBleHostInstalled`), because an Android build is still the simulated prototype until there is a patch to find. Nothing has talked to a radio |
 | Notification tier, screen-wake | Implemented on Android, over an in-repo platform channel |
 | Post-reset check-in, streaks, persistence | Implemented, on-disk, no plugins |
 
